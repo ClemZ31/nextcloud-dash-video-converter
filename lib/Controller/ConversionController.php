@@ -40,9 +40,7 @@ class ConversionController extends Controller
 		$dir = dirname($file);
 		$response = array();
 		if (file_exists($file)) {
-			$cmd = $this->createCmd($file, $preset, $type, $priority, $movflags, $codec, $vbitrate, $scale);
-			exec("cd /var/www/nextcloud/config");
-			exec("echo ".$cmd." >> ffmpeg.txt");
+			$cmd = $this->createCmd($file, $preset, $type, $priority, $movflags, $codec, $vbitrate, $scale);			
 			exec($cmd, $output, $return);
 			// if the file is in external storage, and also check if encryption is enabled
 			if ($external || \OC::$server->getEncryptionManager()->isEnabled()) {
