@@ -198,6 +198,7 @@ class ConversionController extends Controller
 		$subsInput = escapeshellarg(dirname($file) . '/' . pathinfo($file)['filename'] . ".srt");
 		$subsOutput = escapeshellarg(dirname($file) . '/' . pathinfo($file)['filename'] . ".vtt");
 		$subTitlesConversionCmd = $ffmepgPath. "ffmpeg -re -y -i ". $subsInput." -f webvtt ". $subsOutput;
+		$refreshDirCmd = " php /var/www/nextcloud/occ files:scan --all";
 		//die($subTitlesConversionCmd);
 
 		// Reference for mpd						
@@ -212,6 +213,7 @@ class ConversionController extends Controller
 			$output_mpd_file = escapeshellarg(dirname($file) . '/' . pathinfo($file)['filename'] . "." . $output);
 			$cmd = $ffmepgPath . "ffmpeg -re -y -i " . escapeshellarg($file) . " -preset slow -keyint_min 100 -g 100 -sc_threshold 0 -r 25 -c:v libx264 -pix_fmt yuv420p -c:a aac -c:s copy -map v:0 -s:0 256x144 -b:v:0 160k -maxrate:0 160k -bufsize:0 320k -map v:0 -s:1 426x240 -b:v:1 450k -maxrate:1 450k -bufsize:1 900k -map v:0 -s:2 640x360 -b:v:2 1M -maxrate:2 1M -bufsize:2 2M -map v:0 -s:3 854x480 -b:v:3 2.5M -maxrate:3 2.5M -bufsize:3 5M -map v:0 -s:4 1280x720 -b:v:4 5M -maxrate:4 5M -bufsize:4 10M -map v:0 -s:5 1920x1080 -b:v:5 8M -maxrate:5 8M -bufsize:5 16M -map a:0 -b:a:0 128k -ac:a:0 1 -map a:0 -b:a:1 384k -ac:a:1 2 -use_template 1 -use_timeline 1 -seg_duration 4 -media_seg_name '" . $media_dir . "' -init_seg_name '" . $segments_dir . "'  -f dash " . $output_mpd_file;
 			$cmd .= " && ". $subTitlesConversionCmd;
+			$cmd .= " && " . $refreshDirCmd;	
 			//die($cmd);
 		} elseif ($output == "m3u8") {
 			// Reference for hls
@@ -225,6 +227,7 @@ class ConversionController extends Controller
 			$changeDirCmd = "cd ".escapeshellarg(dirname($file))." && ";												 
 			$cmd = $changeDirCmd . $ffmepgPath . "ffmpeg -re -y -err_detect ignore_err -i " . escapeshellarg($file) . " -preset slow -keyint_min 100 -sc_threshold 0 -c:v libx264 -map v:0 -s:0 256x144 -b:v:0 160k -maxrate:0 160k -bufsize:0 320k -map v:0 -s:1 426x240 -b:v:1 450k -maxrate:1 450k -bufsize:1 900k -map v:0 -s:2 640x360 -b:v:2 1M -maxrate:2 1M -bufsize:2 2M -map v:0 -s:3 854x480 -b:v:3 2.5M -maxrate:3 2.5M -bufsize:3 5M -map v:0 -s:4 1280x720 -b:v:4 5M -maxrate:4 5M -bufsize:4 10M -map v:0 -s:5 1920x1080 -b:v:5 8M -maxrate:5 8M -bufsize:5 16M -map a:0 -c:a:0 aac -b:a:0 96k -ac 2 -map a:0 -c:a:1 aac -b:a:1 96k -ac 2 -map a:0 -c:a:2 aac -b:a:2 96k -ac 2 -map a:0 -c:a:3 aac -b:a:3 96k -ac 2 -map a:0 -c:a:4 aac -b:a:4 96k -ac 2 -map a:0 -c:a:5 aac -b:a:5 96k -ac 2 -f hls -hls_init_time 0 -hls_time 2 -hls_list_size 0 -strftime_mkdir 1 -hls_flags independent_segments+delete_segments -hls_segment_type mpegts -hls_segment_filename '" . $hls_segment_filename . "' -master_pl_name '" . $master_pl_name . "' -var_stream_map 'v:0,a:0 v:1,a:1 v:2,a:2 v:3,a:3 v:4,a:4 v:5,a:5' '". $var_stream_map."'";
 			$cmd .= " && " . $subTitlesConversionCmd;
+			$cmd .= " && " . $refreshDirCmd;			
 			
 			//echo $cmd;
 		} else
