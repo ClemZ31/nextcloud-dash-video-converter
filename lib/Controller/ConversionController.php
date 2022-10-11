@@ -200,6 +200,7 @@ class ConversionController extends Controller
 		$subsInput = escapeshellarg(dirname($file) . '/' . pathinfo($file)['filename'] . ".srt");
 		$subsOutput = escapeshellarg(dirname($file) . '/' . pathinfo($file)['filename'] . ".vtt");
 		$subTitlesConversionCmd = $ffmepgPath. "ffmpeg -re -y -i '". $subsInput."' -f webvtt '". $subsOutput. "'";
+		die($subTitlesConversionCmd);
 
 		// Reference for mpd						
 		if ($output == "mpd") {
