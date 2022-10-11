@@ -194,13 +194,13 @@ class ConversionController extends Controller
 		}
 
 		//$ffmepgPath = " /usr/local/bin/"; //uncomment for dev
-		$ffmepgPath = " "; //uncomment for prod
+		$ffmepgPath = ""; //uncomment for prod
 
 
 		$subsInput = escapeshellarg(dirname($file) . '/' . pathinfo($file)['filename'] . ".srt");
 		$subsOutput = escapeshellarg(dirname($file) . '/' . pathinfo($file)['filename'] . ".vtt");
-		$subTitlesConversionCmd = $ffmepgPath. "ffmpeg -re -y -i '". $subsInput."' -f webvtt '". $subsOutput. "'";
-		die($subTitlesConversionCmd);
+		$subTitlesConversionCmd = $ffmepgPath. "ffmpeg -re -y -i ". $subsInput." -f webvtt ". $subsOutput;
+		//die($subTitlesConversionCmd);
 
 		// Reference for mpd						
 		if ($output == "mpd") {
