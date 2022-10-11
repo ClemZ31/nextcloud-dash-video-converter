@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<info xmlns:xsi= "http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+    <id>video_converter</id>
+    <name>Video converter</name>
+    <summary>Convert videos within the web interface</summary>
+    <screenshot>https://raw.githubusercontent.com/PaulLereverend/NextcloudVideo_Converter/master/img/appstore.gif</screenshot>
+    <description><![CDATA[Convert videos within the web interface
+
+*  **Features:**
+    * Video Conversion
+    * Optionally overwrites files
+    * Preset option
+    * More to come...
+
+*  **Requirements:**
+    * FFmpeg
+
+*  **Note:**
+    * Does not currently support conversion with encryption enabled
+    * More formats will be added soon
+
+]]></description>
+    <version>1.0.5</version>
+    <licence>agpl</licence>
+    <author mail="paulereverend@gmail.com">Paul Lereverend</author>
+    <namespace>Video_converter</namespace>
+    <category>multimedia</category>
+    <category>tools</category>
+    <website>https://github.com/PaulLereverend/NextcloudVideo_Converter</website>
+    <bugs>https://github.com/PaulLereverend/NextcloudVideo_Converter</bugs>
+    <dependencies>
+        <nextcloud min-version="13" max-version="24"/>
+    </dependencies>
+</info>
+
