@@ -130,11 +130,8 @@ $(document).ready(function () {
                         t("video_converter", ".WEBM") +
                         "</a>" +
                         '<a class="button primary" id="mpd">' +
-                        t("video_converter", ".MPEGDASH") +
-                        "</a>" +
-                        '<a class="button primary" id="m3u8">' +
-                        t("video_converter", ".HLSDASH") +
-                        "</a>" +
+                        t("video_converter", ".DASH") +
+                        "</a>" +                      
                         "</div>"
                     );
                     var finished = false;
@@ -177,7 +174,7 @@ $(document).ready(function () {
                         finished = true;
                     });
                     var fileExt = filename.split('.').pop();
-                    var types = ["avi", "mp4", "m4v", "webm", "mpd", "m3u8"];
+                    var types = ["avi", "mp4", "m4v", "webm", "mpd"];
                     types.forEach(type => {
                         if (type == fileExt) {
                             document.getElementById(type).setAttribute('style', 'background-color: lightgray; border-color:lightgray;');
