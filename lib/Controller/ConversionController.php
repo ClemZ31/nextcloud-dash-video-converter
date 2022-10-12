@@ -215,7 +215,7 @@ class ConversionController extends Controller
 			$cmd = $ffmepgPath . "ffmpeg -re -y -i " . escapeshellarg($file) . " -preset slow -keyint_min 100 -g 100 -sc_threshold 0 -r 25 -c:v libx264 -pix_fmt yuv420p -c:a aac -c:s copy -map v:0 -s:0 256x144 -b:v:0 160k -maxrate:0 160k -bufsize:0 320k -map v:0 -s:1 426x240 -b:v:1 400k -maxrate:1 400k -bufsize:1 800k -map v:0 -s:2 640x360 -b:v:2 700k -maxrate:2 700k -bufsize:2 1.4M -map v:0 -s:3 854x480 -b:v:3 1.25M -maxrate:3 1.25M -bufsize:3 2.5M -map v:0 -s:4 1280x720 -b:v:4 3.2M -maxrate:4 3.2M -bufsize:4 6.4M -map v:0 -s:5 1920x1080 -b:v:5 5.3M -maxrate:5 5.3M -bufsize:5 10.6M  -map a:0 -b:a:0 128k -ac:a:0 1 -use_template 1 -hls_playlist 1 -use_timeline 1 -seg_duration 4 -media_seg_name '" . $media_dir . "' -init_seg_name '" . $segments_dir . "'  -f dash " . $output_mpd_file;
 			$cmd .= " && ". $subTitlesConversionCmd;			
 			$cmd .= " && " . $refreshDirCmd;	
-			die($cmd);
+			//die($cmd);
 		} elseif ($output == "m3u8") {
 			// Reference for hls
 			/*			
