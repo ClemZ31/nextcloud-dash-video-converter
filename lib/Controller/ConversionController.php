@@ -230,7 +230,7 @@ class ConversionController extends Controller
 			$cmd .= " && " . $subTitlesConversionCmd;
 			$cmd .= " && " . $refreshDirCmd;			
 			
-			//echo $cmd;
+			 die($cmd);
 		} else
 			$cmd = $ffmepgPath . "ffmpeg -y -i " . escapeshellarg($file) . " " . $middleArgs . " " . escapeshellarg(dirname($file) . '/' . pathinfo($file)['filename'] . "." . $output);
 
