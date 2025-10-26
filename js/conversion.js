@@ -113,24 +113,24 @@ $(document).ready(function () {
                         '<input type="checkbox" id="movflags" name="faststart" checked>' +
                         "</div></div>" +
                         '<p class="vc-label urldisplay" id="text" style="display: inline; margin-right: 10px;">' +
-                        t("video_converter", "Choose the output format:") +
+                        t("video_converter_test_clement", "Choose the output format:") +
                         " <em></em>" +
                         "</p>" +
                         '<div class="oc-dialog-buttonrow boutons" id="buttons">' +
                         '<a class="button primary" id="mp4">' +
-                        t("video_converter", ".MP4") +
+                        t("video_converter_test_clement", ".MP4") +
                         "</a>" +
                         '<a class="button primary" id="avi">' +
-                        t("video_converter", ".AVI") +
+                        t("video_converter_test_clement", ".AVI") +
                         "</a>" +
                         '<a class="button primary" id="m4v">' +
-                        t("video_converter", ".M4V") +
+                        t("video_converter_test_clement", ".M4V") +
                         "</a>" +
                         '<a class="button primary" id="webm">' +
-                        t("video_converter", ".WEBM") +
+                        t("video_converter_test_clement", ".WEBM") +
                         "</a>" +
                         '<a class="button primary" id="mpd">' +
-                        t("video_converter", ".DASH") +
+                        t("video_converter_test_clement", ".DASH") +
                         "</a>" +                      
                         "</div>"
                     );
@@ -214,7 +214,7 @@ $(document).ready(function () {
                                 $.ajax({
                                     type: "POST",
                                     async: "true",
-                                    url: OC.filePath('video_converter', 'ajax', 'convertHere.php'),
+                                    url: OC.filePath('video_converter_test_clement', 'ajax', 'convertHere.php'),
                                     data: data,
                                     beforeSend: function () {
                                         document.getElementById("loading").style.display = "block";
@@ -248,8 +248,8 @@ $(document).ready(function () {
                                             context.fileList.showFileBusyState(tr, false);
                                             close();
                                             OC.dialogs.alert(
-                                                t('video_converter', response.desc),
-                                                t('video_converter', 'Error converting ' + filename)
+                                                t('video_converter_test_clement', response.desc),
+                                                t('video_converter_test_clement', 'Error converting ' + filename)
                                             );
                                         }
                                     }
