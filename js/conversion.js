@@ -1,272 +1,91 @@
-$(document).ready(function () {
-    var actionsExtract = {
-        init: function () {
-            OCA.Files.fileActions.registerAction({
-                name: 'convert',
-                displayName: 'Convert into',
-                mime: 'video',
-                permissions: OC.PERMISSION_UPDATE,
-                type: OCA.Files.FileActions.TYPE_DROPDOWN,
-                iconClass: 'icon-convert',
-                actionHandler: function (filename, context) {
-                    var a = context.$file[0].children[1].children[0].children[0].innerHTML;
-                    var b = 'background-repeat:no-repeat;margin-right:1px;display: block;width: 40px;height: 32px;white-space: nowrap;border-image-repeat: stretch;border-image-slice: initial;background-size: 32px;';
-                    var position = 30;
-                    var output = [a.slice(0, position), b, a.slice(position)].join('');
+﻿;(function () {
+    'use strict'
 
-                    var self = this;
-                    var preset = "medium";
-                    var priority = "0";
-                    var title = "Titre";
-                    var vcodec = null;
-                    var vbitrate = null;
-                    var scaling = null;
-                    var faststart = true;
-                    $('body').append(
-                        '<div id="linkeditor_overlay" class="oc-dialog-dim"></div>'
-                        + '<div id="linkeditor_container" class="oc-dialog" style="position: fixed; width:600px">'
-                        + '<div id="linkeditor">'
-                        + '</div>'
-                    );
-                    $("#linkeditor").append(
-                      '<div class="urledit push-bottom">' +
-                        '<a class="oc-dialog-close" id="btnClose"></a>' +
-                        '<h2 class="oc-dialog-title" style="display:flex;margin-right:30px;">' +
-                        output +
-                        filename +
-                        "</h2>" +
-                        '<div class="sk-circle" style="display:none" id="loading"><div class="sk-circle1 sk-child"></div><div class="sk-circle2 sk-child"></div><div class="sk-circle3 sk-child"></div><div class="sk-circle4 sk-child"></div><div class="sk-circle5 sk-child"></div><div class="sk-circle6 sk-child"></div><div class="sk-circle7 sk-child"></div><div class="sk-circle8 sk-child"></div><div class="sk-circle9 sk-child"></div><div class="sk-circle10 sk-child"></div><div class="sk-circle11 sk-child"></div><div class="sk-circle12 sk-child"></div></div>' +
-                        '<div style="text-align:center; display:none; margin-top: 10px;" id="noteLoading">' +
-                        "<p>Note: This could take a considerable amount of time depending on your hardware and the preset you chose. You can safely close this window.</p>" +
-                        "</div>" +
-                        '<div id="params">' +
-                        '<p class="vc-label urldisplay" id="labelPreset" style="display:inline-block; margin-right:5px;">' +
-                        "Preset" +
-                        "</p>" +
-                        '<select id="preset">' +
-                        '<option value="ultrafast">UltraFast</option>' +
-                        '<option value="superfast">SuperFast</option>' +
-                        '<option value="veryfast">VeryFast</option>' +
-                        '<option value="faster">Faster</option>' +
-                        '<option value="fast">Fast</option>' +
-                        '<option value="medium" selected>Medium (default)</option>' +
-                        '<option value="slow">Slow</option>' +
-                        '<option value="slower">Slower</option>' +
-                        '<option value="veryslow">VerySlow</option>' +
-                        "</select>" +
-                        "<br>" +
-                        '<p id="note">Note: faster means worse quality or bigger size</p>' +
-                        "<br>" +
-                        '<p class="vc-label urldisplay" id="labelPriority" style="display:inline-block; margin-right:5px;">' +
-                        "Priority" +
-                        "</p>" +
-                        '<select id="priority" style="margin-bottom: 10px;">' +
-                        '<option value="-10">High</option>' +
-                        '<option value="0">Normal (default)</option>' +
-                        '<option value="10" selected>Low</option>' +
-                        "</select>" +
-                        "<br>" +
-                        '<p class="vc-label urldisplay" id="labelCodec" style="display:inline-block; margin-right:5px;">' +
-                        "Codec" +
-                        "</p>" +
-                        '<select id="vcodec" style="margin-bottom: 10px;">' +
-                        '<option value="none">Auto</option>' +
-                        '<option value="x264">H264</option>' +
-                        '<option value="x265">HEVC</option>' +
-                        '<option value="copy">Copy</option>' +
-                        "</select>" +
-                        '<p class="vc-label urldisplay" id="labelBitrate" style="display:inline-block; margin-right:5px;">' +
-                        "Target bitrate" +
-                        "</p>" +
-                        '<select id="vbitrate" style="margin-bottom: 10px;">' +
-                        '<option value="none">Auto</option>' +
-                        '<option value="1">1k</option>' +
-                        '<option value="2">2k</option>' +
-                        '<option value="3">3k</option>' +
-                        '<option value="4">4k</option>' +
-                        '<option value="5">5k</option>' +
-                        '<option value="6">6k</option>' +
-                        '<option value="7">7k</option>' +
-                        "</select>" +
-                        '<p class="vc-label urldisplay" id="labelBitrateUnit" style="display:inline-block; margin-right:5px;">' +
-                        "kbit/s" +
-                        "</p>" +
-                        "<br>" +
-                        '<p class="vc-label urldisplay" id="labelScale" style="display:inline-block; margin-right:5px;">' +
-                        "Scale to" +
-                        "</p>" +
-                        '<select id="scale" style="margin-bottom: 10px;">' +
-                        '<option value="none">Keep</option>' +
-                        '<option value="vga">VGA (640x480)</option>' +
-                        '<option value="wxga">WXGA (1280x720)</option>' +
-                        '<option value="hd">HD (1368x768)</option>' +
-                        '<option value="fhd">FHD (1920x1080)</option>' +
-                        '<option value="uhd">4K (3840x2160)</option>' +
-                        '<option value="320">Keep aspect 320 (Wx320)</option>' +
-                        '<option value="480">Keep aspect 480 (Wx480)</option>' +
-                        '<option value="600">Keep aspect 600 (Wx600)</option>' +
-                        '<option value="720">Keep aspect 720 (Wx720)</option>' +
-                        '<option value="1080">Keep aspect 1080 (Wx1080)</option>' +
-                        "</select><br>" +
-                        '<div class="checkbox-container">' +
-                        '<label class="vc-label" for="movflags">Faststart option (for MP4)</label>' +
-                        '<input type="checkbox" id="movflags" name="faststart" checked>' +
-                        "</div></div>" +
-                        '<p class="vc-label urldisplay" id="text" style="display: inline; margin-right: 10px;">' +
-                        t("video_converter_test_clement", "Choose the output format:") +
-                        " <em></em>" +
-                        "</p>" +
-                        '<div class="oc-dialog-buttonrow boutons" id="buttons">' +
-                        '<a class="button primary" id="mp4">' +
-                        t("video_converter_test_clement", ".MP4") +
-                        "</a>" +
-                        '<a class="button primary" id="avi">' +
-                        t("video_converter_test_clement", ".AVI") +
-                        "</a>" +
-                        '<a class="button primary" id="m4v">' +
-                        t("video_converter_test_clement", ".M4V") +
-                        "</a>" +
-                        '<a class="button primary" id="webm">' +
-                        t("video_converter_test_clement", ".WEBM") +
-                        "</a>" +
-                        '<a class="button primary" id="mpd">' +
-                        t("video_converter_test_clement", ".DASH") +
-                        "</a>" +                      
-                        "</div>"
-                    );
-                    var finished = false;
-                    document.getElementById("btnClose").addEventListener("click", function () {
-                        close();
-                        finished = true;
-                    });
-                    document.getElementById("preset").addEventListener("change", function (element) {
-                        console.log(element.srcElement.value);
-                        preset = element.srcElement.value;
-                    });
-                    document.getElementById("priority").addEventListener("change", function (element) {
-                        console.log(element.srcElement.value);
-                        priority = element.srcElement.value;
-                    });
-                    document.getElementById("vcodec").addEventListener("change", function (element) {
-                        console.log(element.srcElement.value);
-                        vcodec = element.srcElement.value;
-                        if (vcodec === "none") {
-                            vcodec = null;
-                        }
-                    });
-                    document.getElementById("vbitrate").addEventListener("change", function (element) {
-                        vbitrate = element.srcElement.value;
-                        if (vbitrate === "none") {
-                            vbitrate = null;
-                        }
-                    });
-                    document.getElementById("scale").addEventListener("change", function (element) {
-                        scaling = element.srcElement.value;
-                        if (scaling === "none") {
-                            scaling = null;
-                        }
-                    });
-                    document.getElementById("movflags").addEventListener("change", function (element) {
-                        faststart = element.srcElement.checked;
-                    });
-                    document.getElementById("linkeditor_overlay").addEventListener("click", function () {
-                        close();
-                        finished = true;
-                    });
-                    var fileExt = filename.split('.').pop();
-                    var types = ["avi", "mp4", "m4v", "webm", "mpd"];
-                    types.forEach(type => {
-                        if (type == fileExt) {
-                            document.getElementById(type).setAttribute('style', 'background-color: lightgray; border-color:lightgray;');
-                        } else {
-                            document.getElementById(type).addEventListener("click", function ($element) {
-                                if (context.fileInfoModel.attributes.mountType == "external") {
-                                    var data = {
-                                        nameOfFile: filename,
-                                        directory: context.dir,
-                                        external: 1,
-                                        type: $element.target.id,
-                                        preset: preset,
-                                        priority: priority,
-                                        movflags: faststart,
-                                        codec: vcodec,
-                                        vbitrate: vbitrate,
-                                        scale: scaling,
-                                        mtime: context.fileInfoModel.attributes.mtime,
-                                    };
-                                } else {
-                                    var data = {
-                                        nameOfFile: filename,
-                                        directory: context.dir,
-                                        external: 0,
-                                        type: $element.target.id,
-                                        preset: preset,
-                                        priority: priority,
-                                        movflags: faststart,
-                                        codec: vcodec,
-                                        vbitrate: vbitrate,
-                                        scale: scaling,
-                                        shareOwner: context.fileList.dirInfo.shareOwnerId,
-                                    };
-                                }
-                                var tr = context.fileList.findFileEl(filename);
-                                context.fileList.showFileBusyState(tr, true);
-                                $.ajax({
-                                    type: "POST",
-                                    async: "true",
-                                    url: OC.filePath('video_converter_test_clement', 'ajax', 'convertHere.php'),
-                                    data: data,
-                                    beforeSend: function () {
-                                        document.getElementById("loading").style.display = "block";
-                                        document.getElementById("noteLoading").style.display = "block";
-                                        document.getElementById("params").style.display = "none";
-                                        document.getElementById("text").style.display = "none";
-                                        document.getElementById("preset").style.display = "none";
-                                        document.getElementById("vcodec").style.display = "none";
-                                        document.getElementById("vbitrate").style.display = "none";
-                                        document.getElementById("scale").style.display = "none";
-                                        document.getElementById("labelPreset").style.display = "none";
-                                        document.getElementById("labelScale").style.display = "none";
-                                        document.getElementById("labelCodec").style.display = "none";
-                                        document.getElementById("labelBitrate").style.display = "none";
-                                        document.getElementById("labelBitrateUnit").style.display = "none";
-                                        document.getElementById("labelPriority").style.display = "none";
-                                        document.getElementById("movflags").style.display = "none";
-                                        document.getElementById("note").style.display = "none";
-                                        document.getElementById("buttons").setAttribute('style', 'display: none !important');
-                                    },
-                                    success: function (element) {
-                                        element = element.replace(/null/g, '');
-                                        console.log(element);
-                                        response = JSON.parse(element);
-                                        console.log('response: ', response);
-                                        if (response.code == 1) {
-                                            this.filesClient = OC.Files.getClient();
-                                            close();
-                                            context.fileList.reload();
-                                        } else {
-                                            context.fileList.showFileBusyState(tr, false);
-                                            close();
-                                            OC.dialogs.alert(
-                                                t('video_converter_test_clement', response.desc),
-                                                t('video_converter_test_clement', 'Error converting ' + filename)
-                                            );
-                                        }
-                                    }
-                                });
-                            });
-                        }
+    console.log('[video_converter_test_clement] script loaded')
 
-                    });
-                }
-            });
-
-        },
+    function tnc(app, s) {
+        try { if (typeof t === 'function') return t(app, s) } catch (e) {}
+        return s
     }
 
-    function close() {
-        $('#linkeditor_container').remove();
-        $('#linkeditor_overlay').remove();
+    function closeDialog() {
+        $('#linkeditor_container').remove()
+        $('#linkeditor_overlay').remove()
     }
-    actionsExtract.init();
-});
+
+    function buildDialogHtml() {
+        return '' +
+            '<div id="linkeditor_overlay" class="oc-dialog-dim"></div>' +
+            '<div id="linkeditor_container" class="oc-dialog" style="position: fixed; width:600px">' +
+            '  <div id="linkeditor" style="padding: 16px">' +
+            '    <div style="display:flex; justify-content: space-between; align-items:center; margin-bottom:12px">' +
+            '      <h3 style="margin:0">' + tnc('video_converter_test_clement', 'Video conversion') + '</h3>' +
+            '      <button class="button" id="btnClose">' + tnc('video_converter_test_clement', 'Close') + '</button>' +
+            '    </div>' +
+            '    <div style="margin-bottom:10px">' +
+            '      <label for="preset" style="display:inline-block; min-width:120px">' + tnc('video_converter_test_clement', 'Preset') + '</label>' +
+            '      <select id="preset"><option value="fast">fast</option><option value="medium" selected>medium</option><option value="slow">slow</option></select>' +
+            '    </div>' +
+            '    <div style="margin-bottom:10px">' +
+            '      <label for="priority" style="display:inline-block; min-width:120px">' + tnc('video_converter_test_clement', 'Priority') + '</label>' +
+            '      <select id="priority"><option value="0" selected>0</option><option value="5">5</option><option value="10">10</option></select>' +
+            '    </div>' +
+            '    <div style="margin-bottom:10px">' +
+            '      <label for="vcodec" style="display:inline-block; min-width:120px">' + tnc('video_converter_test_clement', 'Video codec') + '</label>' +
+            '      <select id="vcodec"><option value="none" selected>' + tnc('video_converter_test_clement', 'Auto') + '</option><option value="x264">H.264</option><option value="x265">H.265</option><option value="copy">Copy</option></select>' +
+            '    </div>' +
+            '    <div style="margin-bottom:10px">' +
+            '      <label for="vbitrate" style="display:inline-block; min-width:120px">' + tnc('video_converter_test_clement', 'Bitrate') + '</label>' +
+            '      <select id="vbitrate"><option value="none" selected>Auto</option><option value="1">1k</option><option value="2">2k</option><option value="3">3k</option><option value="4">4k</option><option value="5">5k</option><option value="6">6k</option><option value="7">7k</option></select> <span>kbit/s</span>' +
+            '    </div>' +
+            '    <div style="margin-bottom:10px">' +
+            '      <label for="scale" style="display:inline-block; min-width:120px">' + tnc('video_converter_test_clement', 'Scale to') + '</label>' +
+            '      <select id="scale"><option value="none" selected>Keep</option><option value="vga">VGA</option><option value="wxga">WXGA</option><option value="hd">HD</option><option value="fhd">FHD</option><option value="uhd">4K</option></select>' +
+            '    </div>' +
+            '    <div style="margin-bottom:10px">' +
+            '      <label for="movflags">Faststart (MP4)</label> <input type="checkbox" id="movflags" checked>' +
+            '    </div>' +
+            '    <p style="margin: 10px 0">' + tnc('video_converter_test_clement', 'Choose output format:') + '</p>' +
+            '    <div id="buttons"><a class="button primary" id="mp4">.MP4</a><a class="button primary" id="avi">.AVI</a><a class="button primary" id="m4v">.M4V</a><a class="button primary" id="webm">.WEBM</a><a class="button primary" id="mpd">.DASH</a></div>' +
+            '  </div></div>'
+    }
+
+    function showConversionDialog(filename, context) {
+        var preset='medium',priority='0',vcodec='none',vbitrate='none',scaling='none',faststart=true
+        $('body').append(buildDialogHtml())
+        $('#btnClose').on('click', closeDialog)
+        $('#linkeditor_overlay').on('click', closeDialog)
+        $('#preset').on('change', function(e){preset=e.target.value})
+        $('#priority').on('change', function(e){priority=e.target.value})
+        $('#vcodec').on('change', function(e){vcodec=e.target.value})
+        $('#vbitrate').on('change', function(e){vbitrate=e.target.value})
+        $('#scale').on('change', function(e){scaling=e.target.value})
+        $('#movflags').on('change', function(e){faststart=!!e.target.checked})
+        try{var fileExt=(filename.split('.').pop()||'').toLowerCase();['avi','mp4','m4v','webm','mpd'].forEach(function(type){if(type===fileExt)$('#'+type).css({backgroundColor:'lightgray',borderColor:'lightgray',pointerEvents:'none'})})}catch(e){}
+        function onChooseFormat(evt){
+            var format=evt.target.id
+            var external=(context&&context.fileInfoModel&&context.fileInfoModel.attributes&&context.fileInfoModel.attributes.mountType==='external')?1:0
+            var data={nameOfFile:filename,directory:context&&context.dir?context.dir:'/',external:external,type:format,preset:preset,priority:priority,movflags:faststart,codec:(vcodec==='none'?null:vcodec),vbitrate:(vbitrate==='none'?null:vbitrate),scale:(scaling==='none'?null:scaling)}
+            try{if(context&&context.fileInfoModel&&context.fileInfoModel.attributes&&context.fileInfoModel.attributes.mtime)data.mtime=context.fileInfoModel.attributes.mtime}catch(e){}
+            try{if(external===0&&context&&context.fileList&&context.fileList.dirInfo&&context.fileList.dirInfo.shareOwnerId)data.shareOwner=context.fileList.dirInfo.shareOwnerId}catch(e){}
+            var tr=context&&context.fileList?context.fileList.findFileEl(filename):null
+            if(context&&context.fileList&&tr)context.fileList.showFileBusyState(tr,true)
+            $('#buttons a.button').attr('disabled','disabled')
+              $.ajax({type:'POST',async:true,url:OC.filePath('video_converter_test_clement','ajax','convertHere.php'),data:data,success:function(resp){console.log('[video_converter_test_clement] conversion success',resp)},error:function(xhr){console.error('[video_converter_test_clement] conversion failed',xhr.status,xhr.statusText,xhr.responseText)},complete:function(){if(context&&context.fileList&&tr)context.fileList.showFileBusyState(tr,false);closeDialog()}})
+        }
+        $('#buttons').find('a.button').on('click',onChooseFormat)
+    }
+
+    function registerNC32Action(){
+        if(!window._nc_fileactions){console.log('[video_converter_test_clement] _nc_fileactions not available yet');return false}
+        try{
+            var actionDef={id:'video-convert',displayName:function(nodes){return tnc('video_converter_test_clement','Convert into')},iconSvgInline:function(){return '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zm0 1a5 5 0 1 1 0 10A5 5 0 0 1 8 3zm-.5 2v3.5H5l3 3 3-3H8.5V5h-1z"/></svg>'},enabled:function(nodes){if(nodes.length!==1)return false;var node=nodes[0];if(!node||!node.mime)return false;return node.mime.startsWith('video/')},exec:function(node){var filename=node.basename;var context={dir:node.dirname||'/',fileInfoModel:{attributes:{mountType:node.attributes&&node.attributes.mountType,mtime:node.mtime}},fileList:{dirInfo:{shareOwnerId:node.attributes&&node.attributes['owner-id']},findFileEl:function(){return null},showFileBusyState:function(){}}};showConversionDialog(filename,context)},order:50}
+            if(typeof window._nc_fileactions==='function'){window._nc_fileactions(actionDef)}else if(window._nc_fileactions&&typeof window._nc_fileactions.push==='function'){window._nc_fileactions.push(actionDef)}else if(window._nc_fileactions&&typeof window._nc_fileactions.registerAction==='function'){window._nc_fileactions.registerAction(actionDef)}else{console.warn('[video_converter_test_clement] unknown _nc_fileactions structure',typeof window._nc_fileactions);return false}
+            console.log('[video_converter_test_clement] NC32 file action registered via _nc_fileactions');return true
+        }catch(e){console.error('[video_converter_test_clement] failed to register NC32 action',e);return false}
+    }
+
+    function tryRegister(){if(!registerNC32Action()){setTimeout(tryRegister,500)}}
+
+    if(document.readyState==='complete'||document.readyState==='interactive'){console.log('[video_converter_test_clement] attempting registration (dom ready)');tryRegister()}else{document.addEventListener('DOMContentLoaded',function(){console.log('[video_converter_test_clement] attempting registration (DOMContentLoaded)');tryRegister()})}
+})()

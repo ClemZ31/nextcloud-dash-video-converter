@@ -41,10 +41,6 @@ class Application extends App implements IBootstrap {
             );
         });
 
-        // Register assets (registering directly here is acceptable for simple assets).
-        // Using the event dispatcher API changed; register scripts/styles directly.
-        Util::addScript('video_converter_test_clement', 'conversion');
-        Util::addStyle('video_converter_test_clement', 'style');
     }
 
     /**
@@ -53,6 +49,9 @@ class Application extends App implements IBootstrap {
      * @param IBootContext $context
      */
     public function boot(IBootContext $context): void {
-        // No runtime boot actions required currently.
+        // Register assets for the current request.
+        // Boot runs during each request, ensuring Files pages load our JS/CSS.
+        Util::addScript('video_converter_test_clement', 'conversion');
+        Util::addStyle('video_converter_test_clement', 'style');
     }
 }
