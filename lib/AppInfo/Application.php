@@ -23,19 +23,17 @@ class Application extends App implements IBootstrap {
     public function register(IRegistrationContext $context): void {
         // Register the ConversionController service so the router can instantiate it.
         // IRegistrationContext exposes registerService(...) rather than getContainer().
-        $context->registerService('ConversionController', function($c) {
-            // We use the global server to fetch the current user id if available.
+        $appName = $this->getAppName(); // Capture app name outside the closure
+        $context->registerService('ConversionController', function($c) use ($appName) {
+            // Resolve current user and a guaranteed IRequest instance from the global server
             $user = \OC::$server->getUserSession()->getUser();
             $userId = $user ? $user->getUID() : null;
 
-            // $c is the DI container passed by the framework; query the Request from it.
-            $request = null;
-            if (is_object($c) && method_exists($c, 'query')) {
-                $request = $c->query('Request');
-            }
+            // Always get the Request from the global server to avoid null injection/type errors
+            $request = \OC::$server->getRequest();
 
             return new \OCA\Video_Converter_Test_Clement\Controller\ConversionController(
-                $this->getAppName(),
+                $appName,
                 $request,
                 $userId
             );

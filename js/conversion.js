@@ -71,7 +71,7 @@
             var tr=context&&context.fileList?context.fileList.findFileEl(filename):null
             if(context&&context.fileList&&tr)context.fileList.showFileBusyState(tr,true)
             $('#buttons a.button').attr('disabled','disabled')
-              $.ajax({type:'POST',async:true,url:OC.filePath('video_converter_test_clement','ajax','convertHere.php'),data:data,success:function(resp){console.log('[video_converter_test_clement] conversion success',resp)},error:function(xhr){console.error('[video_converter_test_clement] conversion failed',xhr.status,xhr.statusText,xhr.responseText)},complete:function(){if(context&&context.fileList&&tr)context.fileList.showFileBusyState(tr,false);closeDialog()}})
+              $.ajax({type:'POST',async:true,url:OC.filePath('video_converter_test_clement','ajax','convertHere.php'),data:data,dataType:'json',success:function(resp){try{if(typeof resp==='string'){resp=JSON.parse(resp)};if(resp&&resp.code===1){console.log('[video_converter_test_clement] conversion success',resp)}else{console.error('[video_converter_test_clement] conversion returned error',resp)}}catch(e){console.error('[video_converter_test_clement] conversion parse error',e,resp)}},error:function(xhr){console.error('[video_converter_test_clement] conversion failed',xhr.status,xhr.statusText,xhr.responseText)},complete:function(){if(context&&context.fileList&&tr)context.fileList.showFileBusyState(tr,false);closeDialog()}})
         }
         $('#buttons').find('a.button').on('click',onChooseFormat)
     }
