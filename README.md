@@ -1,26 +1,53 @@
-# Video Converter
-Place this app in **nextcloud/apps/**
+# Video Converter (PFE)
 
-## Features
+Ce projet de convertisseur vidéo permet aux utilisateurs de convertir des fichiers vidéo dans différents formats directement depuis l'interface de Nextcloud.
 
-* Video Conversion
+## Contexte
 
-## Output supported
+Le convertisseur vidéo a été conçu pour faciliter la gestion et la conversion de fichiers multimédias au sein de l'environnement Nextcloud. Grâce à l'intégration de FFmpeg, cet outil offre une solution simple et efficace pour les utilisateurs souhaitant convertir leurs vidéos en différents formats.
 
-* MP4
-* AVI
-* WEBM
-* M4V
-* DASH (MPD AND HLS)
+## Fonctionnalités
 
-## Requirements
+* Conversion de vidéos dans plusieurs formats
+* Interface utilisateur intuitive intégrée à Nextcloud
+* Support pour les formats de sortie suivants :
+  * MP4
+  * AVI
+  * WEBM
+  * M4V
+  * DASH (MPD et HLS)
 
-* FFmpeg
+## Exigences
 
-## HOW TO USE
+* **Nextcloud** : Version 25 à 32
+* **FFmpeg** : Assurez-vous que FFmpeg est installé sur votre serveur Nextcloud.
 
-- Create a directory and upload there the video file to be converted
-- Run the command to convert to DASH format
-- Once the conversion is done, rename the file 'master.m3u8' with the same name of the file with extension mpd which will be found in the root of the folder
-- Open the 'mpd' file if you want to play the video in that format or the 'm3u8' file if you want to play the video in hls format
+## Installation
 
+1. Clonez ou téléchargez ce dépôt.
+2. Placez le dossier de l'application dans le répertoire **nextcloud/apps/**.
+3. Activez l'application via l'interface d'administration de Nextcloud.
+
+## Comment utiliser
+
+1. Créez un répertoire et téléchargez-y le fichier vidéo à convertir.
+2. Faites un clic droit sur le fichier vidéo et sélectionnez "Convert into".
+3. Choisissez le format de sortie souhaité.
+4. La conversion commencera et le fichier converti sera disponible dans le même répertoire une fois le processus terminé.
+
+## Contributeurs
+
+Ce projet a été réalisé par :
+
+* Clément Deffes (clement.deffes.1@ens.etsmtl.ca)
+* Simon Bigonnesse (simon.bigonnesse.1@ens.etsmtl.ca)
+* Nicolas Thibodeau (nicolas.thibodeau.2@etsmtl.net)
+* Abdessamad Cherifi (Abdessamad.cherifi.1@ens.etsmtl.ca)
+
+## Support
+
+Pour toute question ou problème, veuillez ouvrir une issue sur le [dépôt GitHub](https://github.com/Funambules-Medias/nextcloud-dash-video-converter).
+
+## License
+
+Ce projet est sous licence AGPL. Veuillez consulter le fichier LICENSE pour plus de détails.
