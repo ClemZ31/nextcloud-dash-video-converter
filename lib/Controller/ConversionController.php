@@ -1,6 +1,6 @@
 <?php
 
-namespace OCA\Video_Converter_Test_Clement\Controller;
+namespace OCA\Video_Converter_Fm\Controller;
 
 use OCP\IRequest;
 use OCP\AppFramework\Http\TemplateResponse;
@@ -76,7 +76,7 @@ class ConversionController extends Controller
 			}
 		} catch (\Throwable $e) {
 			// Log and surface the error to help troubleshooting instead of a generic 500
-			try { \OC::$server->getLogger()->error('convertHere failed: ' . $e->getMessage(), ['app' => 'video_converter_test_clement']); } catch (\Throwable $ie) {}
+			try { \OC::$server->getLogger()->error('convertHere failed: ' . $e->getMessage(), ['app' => 'video_converter_fm']); } catch (\Throwable $ie) {}
 			return json_encode(["code" => 0, "desc" => "Server error: " . $e->getMessage()]);
 		}
 	}

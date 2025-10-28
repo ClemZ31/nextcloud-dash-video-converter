@@ -14,5 +14,16 @@ return [
             'url'  => 'ajax/convertHere.php',
             'verb' => 'POST'
         ],
+        [
+            'name' => 'page#index', 
+            'url' => '/', 
+            'verb' => 'GET'
+        ],
+        [
+            'name' => 'page#settings', 
+            'url' => 'settings', 
+            'verb' => 'GET'
+        ],
+
     ]
 ];

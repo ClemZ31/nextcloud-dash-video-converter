@@ -1,6 +1,6 @@
 <?php
 
-namespace OCA\Video_Converter_Test_Clement\AppInfo;
+namespace OCA\Video_Converter_Fm\AppInfo;
 
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootstrap;
@@ -11,7 +11,7 @@ use OCP\Util;
 class Application extends App implements IBootstrap {
 
     public function __construct(array $urlParams = []) {
-        parent::__construct('video_converter_test_clement', $urlParams);
+        parent::__construct('video_converter_fm', $urlParams);
     }
 
     /**
@@ -24,6 +24,8 @@ class Application extends App implements IBootstrap {
         // Register the ConversionController service so the router can instantiate it.
         // IRegistrationContext exposes registerService(...) rather than getContainer().
         $appName = $this->getAppName(); // Capture app name outside the closure
+        
+        // Register ConversionController
         $context->registerService('ConversionController', function($c) use ($appName) {
             // Resolve current user and a guaranteed IRequest instance from the global server
             $user = \OC::$server->getUserSession()->getUser();
@@ -32,7 +34,20 @@ class Application extends App implements IBootstrap {
             // Always get the Request from the global server to avoid null injection/type errors
             $request = \OC::$server->getRequest();
 
-            return new \OCA\Video_Converter_Test_Clement\Controller\ConversionController(
+            return new \OCA\Video_Converter_Fm\Controller\ConversionController(
+                $appName,
+                $request,
+                $userId
+            );
+        });
+        
+        // Register PageController
+        $context->registerService('PageController', function($c) use ($appName) {
+            $user = \OC::$server->getUserSession()->getUser();
+            $userId = $user ? $user->getUID() : null;
+            $request = \OC::$server->getRequest();
+
+            return new \OCA\Video_Converter_Fm\Controller\PageController(
                 $appName,
                 $request,
                 $userId
@@ -49,7 +64,7 @@ class Application extends App implements IBootstrap {
     public function boot(IBootContext $context): void {
         // Register assets for the current request.
         // Boot runs during each request, ensuring Files pages load our JS/CSS.
-        Util::addScript('video_converter_test_clement', 'conversion');
-        Util::addStyle('video_converter_test_clement', 'style');
+            // Vue app is loaded via PageController for the main app page
+            // conversion.js still loaded for Files integration if needed
     }
 }
