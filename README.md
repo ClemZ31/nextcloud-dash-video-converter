@@ -48,6 +48,18 @@ npm run build
 npm run dev
 ```
 
+### Déploiement
+Pour déployer sur un serveur de test :
+```powershell
+# 1. Builder
+npm run build
+
+# 2. Déployer
+.\deploy-clean.ps1 -RemoteUser <user> -RemoteHost <host>
+```
+
+Voir `deploy-clean.example.ps1` pour un exemple d'utilisation.
+
 Remarque : les commandes ci-dessus supposent que vous êtes dans le répertoire racine du projet.
 
 ## Fichiers générés

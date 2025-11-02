@@ -23,3 +23,7 @@ css/style.css
 
 # ZIPs de déploiement temporaires
 video_converter_fm_*.zip
+
+# Scripts de déploiement locaux (contiennent des infos sensibles)
+deploy-clean.local.ps1
+*.local.ps1

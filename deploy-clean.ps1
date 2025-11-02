@@ -3,11 +3,23 @@
 # Usage: .\deploy-clean.ps1
 
 param(
-    [string]$RemoteUser = "cdeffes",
-    [string]$RemoteHost = "funambules-nc-test.koumbit.net"
+    [string]$RemoteUser,
+    [string]$RemoteHost
 )
 
 $ErrorActionPreference = "Stop"
+
+# Valider les paramètres obligatoires
+if (-not $RemoteUser -or -not $RemoteHost) {
+    Write-Host "ERREUR: Parametres manquants" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Usage:" -ForegroundColor Yellow
+    Write-Host "  .\deploy-clean.ps1 -RemoteUser <user> -RemoteHost <host>" -ForegroundColor White
+    Write-Host ""
+    Write-Host "Exemple:" -ForegroundColor Yellow
+    Write-Host "  .\deploy-clean.ps1 -RemoteUser cdeffes -RemoteHost funambules-nc-test.koumbit.net" -ForegroundColor White
+    exit 1
+}
 
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host "   Deploiement Video Converter (Clean)" -ForegroundColor Cyan
