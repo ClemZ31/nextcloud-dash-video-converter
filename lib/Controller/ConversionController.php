@@ -11,6 +11,9 @@ use OCP\EventDispatcher\IEventDispatcher;
 use OC\Files\Filesystem;
 
 
+/**
+ * Contrôleur pour la conversion de vidéos
+ */
 class ConversionController extends Controller
 {
 
@@ -33,6 +36,25 @@ class ConversionController extends Controller
 	}
 	/**
 	 * @NoAdminRequired
+	 */
+	/**
+	 * Convertit une vidéo en utilisant FFmpeg avec les paramètres spécifiés
+	 * 
+	 * @param string $nameOfFile Nom du fichier vidéo source
+	 * @param string $directory Répertoire du fichier source
+	 * @param bool $external Indique si le fichier est sur un stockage externe
+	 * @param string $type Format de sortie (mp4/avi/webm/mpd/m3u8)
+	 * @param string $preset Preset FFmpeg (fast/medium/slow)
+	 * @param string $priority Priorité nice (0/5/10)
+	 * @param bool $movflags Activer faststart pour MP4
+	 * @param string|null $codec Codec vidéo (x264/x265/copy/null=auto)
+	 * @param string|null $vbitrate Bitrate vidéo en kbps
+	 * @param string|null $scale Résolution cible
+	 * @param string|null $shareOwner Propriétaire du partage (si applicable)
+	 * @param int $mtime Timestamp de modification (optionnel)
+	 * @return string Réponse JSON avec le code et la description du résultat
+	 * 
+	 * @note Gère les fichiers sur stockage externe et la réindexation après conversion
 	 */
 	public function convertHere($nameOfFile, $directory, $external, $type, $preset, $priority, $movflags = false, $codec = null, $vbitrate = null, $scale = null, $shareOwner = null, $mtime = 0)
 	{
@@ -83,6 +105,23 @@ class ConversionController extends Controller
 	/**
 	 * @NoAdminRequired
 	 */
+
+	/**
+ 	* Crée la commande FFmpeg pour la conversion
+ 	* 
+ 	* @param string $file Chemin complet du fichier source
+ 	* @param string $preset Preset FFmpeg (fast/medium/slow)
+ 	* @param string $output Format de sortie (mp4/avi/webm/mpd/m3u8)
+ 	* @param string $priority Nice priority (0/5/10)
+ 	* @param bool $movflags Activer faststart pour MP4
+ 	* @param string|null $codec Codec vidéo (x264/x265/copy/null=auto)
+ 	* @param string|null $vbitrate Bitrate vidéo en kbps
+ 	* @param string|null $scale Résolution cible
+ 	* @return string Commande shell complète
+ 	* 
+ 	* @note Cette méthode construit une commande shell complexe.
+ 	*       Pour DASH/HLS, elle génère une structure multi-résolution.
+ 	*/
 	public function createCmd($file, $preset, $output, $priority, $movflags, $codec, $vbitrate, $scale)
 	{
 		$middleArgs = "";

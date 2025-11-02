@@ -1,4 +1,8 @@
 <!--
+ConversionsContent 
+  - Affiche le contenu principal de l’app selon la section active (conversions | settings).
+  - Utilise NcEmptyContent en attendant l’implémentation de la liste de jobs et des réglages.
+  - Navigation et layout gérés par ConversionsNavigation/NcAppContent.
   - SPDX-FileCopyrightText: 2025 Nextcloud GmbH and Nextcloud contributors
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
@@ -10,18 +14,19 @@
 				{{ pageTitle }}
 			</h1>
 
+			<!-- État vide pour les conversions -->
+			<!-- TODO : Remplacer par la liste des jobs (en cours/terminés) -->
 			<NcEmptyContent
 				v-if="section === 'conversions'"
             	:name="t('video_converter_fm', 'Conversions')"
             	:description="t('video_converter_fm', 'Les conversions en cours seront affichées ici.')">
 				<template #icon>
-					<img
-						alt=""
-						:src="appIconUrl"
-						class="empty-content-icon">
+					<NcIconSvgWrapper :svg="convertIcon" />
 				</template>
 			</NcEmptyContent>
 
+			<!-- État vide pour les paramètres -->
+			<!-- TODO : Remplacer par le formulaire des réglages (se fier au prototype UI) -->
 			<NcEmptyContent
 				v-else-if="section === 'settings'"
             	:name="t('video_converter_fm', 'Paramètres')"
@@ -42,7 +47,8 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { generateUrl } from '@nextcloud/router'
 import { translate as t } from '@nextcloud/l10n'
-import { NcAppContent, NcEmptyContent } from '@nextcloud/vue'
+import { NcAppContent, NcEmptyContent, NcIconSvgWrapper } from '@nextcloud/vue'
+import convertIcon from '../../img/convert_icon.svg?raw'
 
 const route = useRoute()
 const section = computed(() => route.params.section || 'conversions')
@@ -54,7 +60,6 @@ const pageTitle = computed(() => {
 	return t('video_converter_fm', 'Conversions en cours')
 })
 
-const appIconUrl = generateUrl('/apps/video_converter_fm/img/convert_icon.svg')
 const coreSettingsIcon = generateUrl('/core/img/actions/settings.svg')
 </script>
 
@@ -81,5 +86,6 @@ const coreSettingsIcon = generateUrl('/core/img/actions/settings.svg')
 	width: 64px;
 	height: 64px;
 	opacity: 0.5;
+    filter: var(--background-invert-if-dark);
 }
 </style>

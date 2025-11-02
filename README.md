@@ -1,53 +1,76 @@
-# Video Converter (PFE)
+# Video Converter Funambules Media (PFE)
 
-Ce projet de convertisseur vidéo permet aux utilisateurs de convertir des fichiers vidéo dans différents formats directement depuis l'interface de Nextcloud.
-
-## Contexte
-
-Le convertisseur vidéo a été conçu pour faciliter la gestion et la conversion de fichiers multimédias au sein de l'environnement Nextcloud. Grâce à l'intégration de FFmpeg, cet outil offre une solution simple et efficace pour les utilisateurs souhaitant convertir leurs vidéos en différents formats.
+Utilitaire Nextcloud pour convertir des fichiers vidéo via FFmpeg. Conçu pour être simple, intégré à l'interface Nextcloud et adapté au déploiement sur un serveur Nextcloud.
 
 ## Fonctionnalités
+- Conversion de vidéos vers DASH et HLS.
+- Intégration native à Nextcloud (menu contextuel "Convert into" et menu d'application "Conversions")
+- Basé sur FFmpeg pour la conversion
 
-* Conversion de vidéos dans plusieurs formats
-* Interface utilisateur intuitive intégrée à Nextcloud
-* Support pour les formats de sortie suivants :
-  * MP4
-  * AVI
-  * WEBM
-  * M4V
-  * DASH (MPD et HLS)
+## Prérequis
+- Nextcloud : versions 25–32
+- PHP : 8.1+
+- FFmpeg : installé et accessible depuis le serveur
+- Node.js : 20+
+- npm : 10+
 
-## Exigences
+## Installation rapide
+1. Clonez ou téléchargez le dépôt.
+2. Copiez le dossier de l'application dans `nextcloud/apps/`.
+3. Activez l'application :
+  - Via l'interface d'administration Nextcloud, ou
+  - En CLI : `occ app:enable video_converter_fm`
+4. Vérifiez que FFmpeg est installé et exécutable par l'utilisateur du serveur web.
 
-* **Nextcloud** : Version 25 à 32
-* **FFmpeg** : Assurez-vous que FFmpeg est installé sur votre serveur Nextcloud.
+## Utilisation
+1. Déposez une vidéo dans un dossier Nextcloud.
+2. Clic droit sur le fichier vidéo puis "Convert into".
+3. Choisissez le format de sortie.
+4. La conversion démarre ; le fichier converti est ajouté dans le même répertoire à la fin du processus.
 
-## Installation
+## Développement
 
-1. Clonez ou téléchargez ce dépôt.
-2. Placez le dossier de l'application dans le répertoire **nextcloud/apps/**.
-3. Activez l'application via l'interface d'administration de Nextcloud.
+### Préparations
+- Installer les dépendances :
+```bash
+npm install
+```
 
-## Comment utiliser
+### Build
+- Pour produire les artefacts de production :
+```bash
+npm run build
+```
 
-1. Créez un répertoire et téléchargez-y le fichier vidéo à convertir.
-2. Faites un clic droit sur le fichier vidéo et sélectionnez "Convert into".
-3. Choisissez le format de sortie souhaité.
-4. La conversion commencera et le fichier converti sera disponible dans le même répertoire une fois le processus terminé.
+### Mode développement (watch)
+- Démarrage en dev (rechargement automatique) :
+```bash
+npm run dev
+```
+
+Remarque : les commandes ci-dessus supposent que vous êtes dans le répertoire racine du projet.
+
+## Fichiers générés
+Ne modifiez pas manuellement les fichiers compilés — éditez les sources dans `src/` :
+- `js/conversions-app.js` — bundle JS généré
+- `css/style.css` — CSS compilé
+
+Pour régénérer :
+```bash
+npm run build    # build production
+npm run dev      # mode watch
+```
 
 ## Contributeurs
-
-Ce projet a été réalisé par :
-
-* Clément Deffes (clement.deffes.1@ens.etsmtl.ca)
-* Simon Bigonnesse (simon.bigonnesse.1@ens.etsmtl.ca)
-* Nicolas Thibodeau (nicolas.thibodeau.2@etsmtl.net)
-* Abdessamad Cherifi (Abdessamad.cherifi.1@ens.etsmtl.ca)
+Projet réalisé pour Funambules Média par :
+- Clément Deffes — clement.deffes.1@ens.etsmtl.ca
+- Simon Bigonnesse — simon.bigonnesse.1@ens.etsmtl.ca
+- Nicolas Thibodeau — nicolas.thibodeau.2@etsmtl.net
+- Abdessamad Cherifi — abdessamad.cherifi.1@ens.etsmtl.ca
 
 ## Support
+Ouvrez une issue sur le dépôt :  
+https://github.com/Funambules-Medias/nextcloud-dash-video-converter
 
-Pour toute question ou problème, veuillez ouvrir une issue sur le [dépôt GitHub](https://github.com/Funambules-Medias/nextcloud-dash-video-converter).
-
-## License
-
-Ce projet est sous licence AGPL. Veuillez consulter le fichier LICENSE pour plus de détails.
+## Licence
+Ce projet est distribué sous licence AGPL. Voir le fichier LICENSE pour les détails.

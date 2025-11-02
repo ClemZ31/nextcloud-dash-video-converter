@@ -16,3 +16,10 @@ package-lock.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Fichiers générés avec le build output de Vite
+js/conversions-app.js
+css/style.css
+
+# ZIPs de déploiement temporaires
+video_converter_fm_*.zip

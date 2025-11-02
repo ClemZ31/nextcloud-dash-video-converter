@@ -1,4 +1,12 @@
-﻿;(function () {
+﻿/**
+ * Script d'intégration pour l'action de conversion dans l'interface Files de Nextcloud
+ * 
+ * @author Équipe PFE
+ * @description Ajoute l'action "Convert into" dans le menu contextuel des fichiers vidéo
+ * @note Utilise jQuery pour la compatibilité avec l'interface Files existante
+ */
+
+;(function () {
     'use strict'
 
     console.log('[video_converter_fm] script loaded')

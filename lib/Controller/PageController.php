@@ -21,8 +21,12 @@ class PageController extends Controller {
     }
     
     /**
+     * Affiche la page principale de l'application
+     * 
      * @NoAdminRequired
      * @NoCSRFRequired
+     * 
+     * @return TemplateResponse
      */
     public function index(): TemplateResponse {
         // Load Vue app
@@ -38,8 +42,12 @@ class PageController extends Controller {
     }
 
     /**
+     * Affiche la page des paramètres de l'application
+     * 
      * @NoAdminRequired
      * @NoCSRFRequired
+     * 
+     * @return TemplateResponse
      */
     public function settings(): TemplateResponse {
         // Settings is now handled by Vue Router, redirect to index

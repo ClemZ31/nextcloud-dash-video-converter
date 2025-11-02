@@ -18,7 +18,9 @@ Write-Host ""
 Write-Host "[1/4] Creation de la structure temporaire..." -ForegroundColor Yellow
 
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$tempDir = "video_converter_fm_temp"
+# Crée un dossier racine avec le NOM EXACT de l'app pour que l'archive
+# décompresse directement en apps/video_converter_fm côté serveur
+$tempDir = "video_converter_fm"
 $archiveName = "video_converter_fm_${timestamp}.zip"
 
 # Nettoyer le dossier temp s'il existe
@@ -55,8 +57,45 @@ Write-Host ""
 # Étape 2: Création de l'archive
 Write-Host "[2/4] Creation de l'archive..." -ForegroundColor Yellow
 
-# Créer le ZIP depuis le dossier parent pour avoir la bonne structure
-Compress-Archive -Path $tempDir -DestinationPath $archiveName -Force
+# Créer le ZIP avec des chemins Unix (forward slashes)
+# On doit convertir les chemins pour éviter les backslashes Windows
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+Add-Type -AssemblyName System.IO.Compression
+
+# Créer le ZIP avec compression et chemins Unix
+$zipPath = Join-Path $PWD $archiveName
+if (Test-Path $zipPath) {
+    Remove-Item $zipPath -Force
+}
+
+$zip = [System.IO.Compression.ZipFile]::Open($zipPath, 'Create')
+
+try {
+    Get-ChildItem -Path $tempDir -Recurse -File | ForEach-Object {
+        $relativePath = $_.FullName.Substring((Get-Item $tempDir).FullName.Length + 1)
+        # Convertir les backslashes en forward slashes pour Unix
+        $entryName = "$tempDir/$($relativePath.Replace('\', '/'))"
+        
+        $entry = $zip.CreateEntry($entryName, 'Optimal')
+        $entryStream = $entry.Open()
+        $fileStream = [System.IO.File]::OpenRead($_.FullName)
+        $fileStream.CopyTo($entryStream)
+        $fileStream.Close()
+        $entryStream.Close()
+    }
+    
+    # Ajouter les dossiers vides
+    Get-ChildItem -Path $tempDir -Recurse -Directory | ForEach-Object {
+        if (@(Get-ChildItem -Path $_.FullName).Count -eq 0) {
+            $relativePath = $_.FullName.Substring((Get-Item $tempDir).FullName.Length + 1)
+            $entryName = "$tempDir/$($relativePath.Replace('\', '/'))/"
+            $zip.CreateEntry($entryName) | Out-Null
+        }
+    }
+}
+finally {
+    $zip.Dispose()
+}
 
 Write-Host "[OK] Archive creee: $archiveName" -ForegroundColor Green
 Write-Host ""
@@ -86,47 +125,61 @@ Write-Host ""
 Write-Host "# Ensuite, executez ces commandes:" -ForegroundColor Gray
 Write-Host ""
 
-$commands = @"
+$commands = @'
 # Variables
 APP_ID=video_converter_fm
-APP_DIR=/var/www/nextcloud/apps/\$APP_ID
-ZIP_FILE=~/video_converter_fm_${timestamp}.zip
+APP_DIR=/var/www/nextcloud/apps/$APP_ID
+ZIP_FILE=$(ls -t ~/video_converter_fm_*.zip 2>/dev/null | head -n1)
+
+# Vérifier que le ZIP existe
+if [ -z "$ZIP_FILE" ]; then
+  echo "ERREUR: Aucun ZIP video_converter_fm_*.zip trouvé dans ~/"
+  exit 1
+fi
+
+echo "ZIP trouvé: $ZIP_FILE"
 
 # 1. Maintenance ON
 sudo -u www-data php /var/www/nextcloud/occ maintenance:mode --on
 
 # 2. Backup si existe (optionnel)
-if [ -d "\$APP_DIR" ]; then
+if [ -d $APP_DIR ]; then
   mkdir -p ~/backups
-  sudo tar -czf ~/backups/backup_\${APP_ID}_${timestamp}.tar.gz -C /var/www/nextcloud/apps \$APP_ID
+  sudo tar -czf ~/backups/backup_${APP_ID}_$(date +%Y%m%d_%H%M%S).tar.gz -C /var/www/nextcloud/apps $APP_ID
 fi
 
 # 3. Nettoyer les anciennes versions
 sudo rm -rf /var/www/nextcloud/apps/video_converter*
 
 # 4. Extraire le nouveau ZIP
-cd ~
 rm -rf ~/deploy-temp
 mkdir -p ~/deploy-temp
 cd ~/deploy-temp
-unzip -q "\$ZIP_FILE"
+unzip -q "$ZIP_FILE"
 
 # 5. Vérifier la structure
 echo "Structure extraite:"
-ls -la video_converter_fm_temp/
+ls -la video_converter_fm/
+
+# Vérifier que le dossier a bien été extrait
+if [ ! -d "video_converter_fm" ]; then
+  echo "ERREUR: Le dossier video_converter_fm n'existe pas dans le ZIP"
+  sudo -u www-data php /var/www/nextcloud/occ maintenance:mode --off
+  exit 1
+fi
 
 # 6. Déployer
-sudo mv ~/deploy-temp/video_converter_fm_temp "\$APP_DIR"
-sudo chown -R www-data:www-data "\$APP_DIR"
-sudo find "\$APP_DIR" -type d -exec chmod 755 {} +
-sudo find "\$APP_DIR" -type f -exec chmod 644 {} +
+sudo mv -f ~/deploy-temp/video_converter_fm $APP_DIR
+sudo chown -R www-data:www-data $APP_DIR
+sudo find $APP_DIR -type d -exec chmod 755 {} \;
+sudo find $APP_DIR -type f -exec chmod 644 {} \;
 
 # 7. Vérifier info.xml
 echo "Verification info.xml:"
-sudo cat "\$APP_DIR/appinfo/info.xml" | grep -E '<id>|<version>'
+sudo cat $APP_DIR/appinfo/info.xml | grep -E '<id>|<version>'
 
 # 8. Activer l'app
-sudo -u www-data php /var/www/nextcloud/occ app:enable \$APP_ID
+sudo -u www-data php /var/www/nextcloud/occ app:enable $APP_ID
 
 # 9. Reload services
 sudo systemctl reload php8.2-fpm
@@ -141,13 +194,13 @@ echo "Apps installees:"
 sudo -u www-data php /var/www/nextcloud/occ app:list | grep video_converter
 
 # 12. Nettoyage
-rm -f "\$ZIP_FILE"
+rm -f "$ZIP_FILE"
 rm -rf ~/deploy-temp
 
 echo ""
 echo "Deploiement termine !"
 echo "Ouvrir: https://funambules-nc-test.koumbit.net/apps/video_converter_fm/"
-"@
+'@
 
 Write-Host $commands -ForegroundColor White
 Write-Host ""

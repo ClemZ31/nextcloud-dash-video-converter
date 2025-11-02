@@ -62,9 +62,8 @@ class Application extends App implements IBootstrap {
      * @param IBootContext $context
      */
     public function boot(IBootContext $context): void {
-        // Register assets for the current request.
-        // Boot runs during each request, ensuring Files pages load our JS/CSS.
-            // Vue app is loaded via PageController for the main app page
-            // conversion.js still loaded for Files integration if needed
+        // Charger le script d'intégration Files sur toutes les pages
+        // (le script lui-même vérifie s'il est sur la page Files avant de s'enregistrer)
+        Util::addScript('video_converter_fm', 'conversion');
     }
 }
