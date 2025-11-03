@@ -53,4 +53,17 @@ class PageController extends Controller {
         // Settings is now handled by Vue Router, redirect to index
         return $this->index();
     }
+
+    /**
+     * Affiche la page des conversions en cours
+     * 
+     * @NoAdminRequired
+     * @NoCSRFRequired
+     * 
+     * @return TemplateResponse
+     */
+    public function conversions(): TemplateResponse {
+        // Conversions is now handled by Vue Router, redirect to index
+        return $this->index();
+    }
 }

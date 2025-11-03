@@ -15,6 +15,16 @@ return [
             'verb' => 'POST'
         ],
         [
+            'name' => 'conversion#getJobStatus',
+            'url'  => 'api/jobs/{jobId}',
+            'verb' => 'GET'
+        ],
+        [
+            'name' => 'conversion#listJobs',
+            'url'  => 'api/jobs',
+            'verb' => 'GET'
+        ],
+        [
             'name' => 'page#index', 
             'url' => '/', 
             'verb' => 'GET'
@@ -22,6 +32,11 @@ return [
         [
             'name' => 'page#settings', 
             'url' => 'settings', 
+            'verb' => 'GET'
+        ],
+        [
+            'name' => 'page#conversions', 
+            'url' => 'conversions', 
             'verb' => 'GET'
         ],
 

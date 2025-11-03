@@ -9,6 +9,8 @@ use OCP\AppFramework\Controller;
 use \OCP\IConfig;
 use OCP\EventDispatcher\IEventDispatcher;
 use OC\Files\Filesystem;
+use OCA\Video_Converter_Fm\Service\ConversionService;
+use OCA\Video_Converter_Fm\Db\VideoJobMapper;
 
 
 /**
@@ -18,14 +20,23 @@ class ConversionController extends Controller
 {
 
 	private $userId;
+	private $conversionService;
+	private $jobMapper;
 
 	/**
 	 * @NoAdminRequired
 	 */
-	public function __construct($AppName, IRequest $request, $userId)
-	{
+	public function __construct(
+		$AppName,
+		IRequest $request,
+		$userId,
+		ConversionService $conversionService,
+		VideoJobMapper $jobMapper
+	) {
 		parent::__construct($AppName, $request);
 		$this->userId = $userId;
+		$this->conversionService = $conversionService;
+		$this->jobMapper = $jobMapper;
 	}
 
 	public function getFile($directory, $fileName)
@@ -59,47 +70,125 @@ class ConversionController extends Controller
 	public function convertHere($nameOfFile, $directory, $external, $type, $preset, $priority, $movflags = false, $codec = null, $vbitrate = null, $scale = null, $shareOwner = null, $mtime = 0)
 	{
 		try {
-			$file = $this->getFile($directory, $nameOfFile);
-			$dir = dirname($file);
-			$response = array();
-			if (file_exists($file)) {
-				$cmd = $this->createCmd($file, $preset, $type, $priority, $movflags, $codec, $vbitrate, $scale);
-				exec($cmd, $output, $return);
-				// if the file is in external storage, and also check if encryption is enabled
-				if ($external || \OC::$server->getEncryptionManager()->isEnabled()) {
-					//put the temporary file in the external storage
-					Filesystem::file_put_contents($directory . '/' . pathinfo($nameOfFile)['filename'] . "." . $type, file_get_contents(dirname($file) . '/' . pathinfo($file)['filename'] . "." . $type));
-					// check that the temporary file is not the same as the new file
-					if (Filesystem::getLocalFile($directory . '/' . pathinfo($nameOfFile)['filename'] . "." . $type) != dirname($file) . '/' . pathinfo($file)['filename'] . "." . $type) {
-						unlink(dirname($file) . '/' . pathinfo($file)['filename'] . "." . $type);
-					}
-				} else {
-					//create the new file in the NC filesystem
-					Filesystem::touch($directory . '/' . pathinfo($file)['filename'] . "." . $type);
-				}
-				//if ffmpeg is throwing an error
-				if ($return == 127) {
-					$response = array_merge($response, array("code" => 0, "desc" => "ffmpeg is not installed or available",
-						"debug" => array("return" => $return, "file" => $file, "output" => $output)));
-					return json_encode($response);
-				} else {
-					$response = array_merge($response, array("code" => 1, "desc" => "Convertion OK: " . $cmd));
-
-					// After file is converted, we need to re-scan files in directory				
-					exec("php /var/www/nextcloud/occ files:scan --all"); //prod
-					//exec("/Applications/MAMP/bin/php/php7.4.12/bin/php /Applications/MAMP/htdocs/nextcloud/occ files:scan --all"); //dev
-
-
-					return json_encode($response);
-				}
-			} else {
-				$response = array_merge($response, array("code" => 0, "desc" => "Can't find file at " . $file));
-				return json_encode($response);
+			// Mode asynchrone : créer un job au lieu d'exécuter immédiatement
+			$inputPath = $directory . '/' . $nameOfFile;
+			
+			// Vérifier que le fichier existe dans le FS Nextcloud
+			\OC_Util::tearDownFS();
+			\OC_Util::setupFS($this->userId);
+			$localFile = Filesystem::getLocalFile($inputPath);
+			
+			if (!file_exists($localFile)) {
+				return json_encode([
+					"code" => 0,
+					"desc" => "File not found: " . $inputPath
+				]);
 			}
+
+			// Créer le job de conversion
+			$conversionParams = [
+				'type' => $type,
+				'preset' => $preset,
+				'priority' => $priority,
+				'movflags' => $movflags,
+				'codec' => $codec,
+				'vbitrate' => $vbitrate,
+				'scale' => $scale,
+				'external' => $external,
+			];
+
+			$job = $this->conversionService->createJob(
+				$this->userId,
+				$nameOfFile, // Utiliser le nom de fichier comme fileId pour le moment
+				$inputPath,
+				$conversionParams
+			);
+
+			\OC::$server->getLogger()->info(
+				"Conversion job #{$job->getId()} created for {$nameOfFile}",
+				['app' => 'video_converter_fm']
+			);
+
+			return json_encode([
+				"code" => 1,
+				"desc" => "Conversion job created successfully",
+				"job_id" => $job->getId(),
+				"status" => "pending"
+			]);
+
 		} catch (\Throwable $e) {
-			// Log and surface the error to help troubleshooting instead of a generic 500
-			try { \OC::$server->getLogger()->error('convertHere failed: ' . $e->getMessage(), ['app' => 'video_converter_fm']); } catch (\Throwable $ie) {}
-			return json_encode(["code" => 0, "desc" => "Server error: " . $e->getMessage()]);
+			\OC::$server->getLogger()->error(
+				'convertHere failed: ' . $e->getMessage(),
+				['app' => 'video_converter_fm', 'exception' => $e]
+			);
+			return json_encode([
+				"code" => 0,
+				"desc" => "Server error: " . $e->getMessage()
+			]);
+		}
+	}
+
+	/**
+	 * Récupère le statut d'un job
+	 * 
+	 * @NoAdminRequired
+	 * @NoCSRFRequired
+	 * @param int $jobId
+	 * @return DataResponse
+	 */
+	public function getJobStatus(int $jobId): DataResponse {
+		try {
+			$job = $this->jobMapper->findById($jobId);
+			
+			// Vérifier que l'utilisateur a le droit de voir ce job
+			if ($job->getUserId() !== $this->userId) {
+				return new DataResponse(['error' => 'Unauthorized'], 403);
+			}
+
+			return new DataResponse([
+				'id' => $job->getId(),
+				'status' => $job->getStatus(),
+				'progress' => $job->getProgress(),
+				'created_at' => $job->getCreatedAt(),
+				'started_at' => $job->getStartedAt(),
+				'finished_at' => $job->getFinishedAt(),
+				'error_message' => $job->getErrorMessage(),
+			]);
+		} catch (\Exception $e) {
+			return new DataResponse(['error' => $e->getMessage()], 404);
+		}
+	}
+
+	/**
+	 * Liste tous les jobs de l'utilisateur
+	 * 
+	 * @NoAdminRequired
+	 * @NoCSRFRequired
+	 * @return DataResponse
+	 */
+	public function listJobs(): DataResponse {
+		try {
+			$jobs = $this->jobMapper->findByUserId($this->userId);
+			
+			$result = array_map(function($job) {
+				return [
+					'id' => $job->getId(),
+					'file_id' => $job->getFileId(),
+					'input_path' => $job->getInputPath(),
+					'output_formats' => $job->getOutputFormats(),
+					'status' => $job->getStatus(),
+					'progress' => $job->getProgress(),
+					'created_at' => $job->getCreatedAt(),
+					'started_at' => $job->getStartedAt(),
+					'completed_at' => $job->getFinishedAt(), // Alias pour Vue.js
+					'finished_at' => $job->getFinishedAt(),
+					'error_message' => $job->getErrorMessage(),
+				];
+			}, $jobs);
+
+			return new DataResponse(['jobs' => $result]);
+		} catch (\Exception $e) {
+			return new DataResponse(['error' => $e->getMessage()], 500);
 		}
 	}
 	/**
