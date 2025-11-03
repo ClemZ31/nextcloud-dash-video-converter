@@ -70,12 +70,11 @@ class ConversionService {
             $cmd = $this->buildFFmpegCommand($localFile, $params);
             $this->logger->info("Executing: {$cmd}", ['app' => 'video_converter_fm']);
 
-            $output = [];
-            $returnCode = 0;
-            exec($cmd, $output, $returnCode);
+            // Exécuter FFmpeg avec suivi de progression
+            $returnCode = $this->executeFFmpegWithProgress($cmd, $job);
 
             if ($returnCode !== 0) {
-                $errorMsg = "FFmpeg failed with code {$returnCode}: " . implode("\n", $output);
+                $errorMsg = "FFmpeg failed with code {$returnCode}";
                 $this->logger->error($errorMsg, ['app' => 'video_converter_fm']);
                 $this->mapper->updateStatus($job->getId(), 'failed', $errorMsg);
                 return false;
@@ -201,5 +200,95 @@ class ConversionService {
      */
     private function rescanFiles(): void {
         exec("php /var/www/nextcloud/occ files:scan --all > /dev/null 2>&1 &");
+    }
+
+    /**
+     * Exécute FFmpeg avec suivi de progression en temps réel
+     */
+    private function executeFFmpegWithProgress(string $cmd, VideoJob $job): int {
+        // D'abord, obtenir la durée totale de la vidéo
+        $inputFile = null;
+        if (preg_match('/-i\s+["\']([^"\']+)["\']/', $cmd, $matches)) {
+            $inputFile = $matches[1];
+        }
+
+        $totalDuration = $this->getVideoDuration($inputFile);
+        
+        // Lancer FFmpeg avec proc_open pour capturer stderr en temps réel
+        $descriptors = [
+            0 => ['pipe', 'r'],  // stdin
+            1 => ['pipe', 'w'],  // stdout
+            2 => ['pipe', 'w']   // stderr (où FFmpeg affiche la progression)
+        ];
+
+        $process = proc_open($cmd, $descriptors, $pipes);
+
+        if (!is_resource($process)) {
+            $this->logger->error("Failed to start FFmpeg process", ['app' => 'video_converter_fm']);
+            return 1;
+        }
+
+        // Fermer stdin (pas besoin)
+        fclose($pipes[0]);
+
+        // Mettre stderr en mode non-bloquant pour lire ligne par ligne
+        stream_set_blocking($pipes[2], false);
+
+        $output = '';
+        $lastUpdateTime = 0;
+
+        while (!feof($pipes[2])) {
+            $line = fgets($pipes[2]);
+            
+            if ($line === false) {
+                usleep(100000); // 0.1 seconde
+                continue;
+            }
+
+            $output .= $line;
+
+            // Parser la progression FFmpeg (chercher "time=")
+            // Exemple: frame= 1234 fps= 30 q=28.0 size=   12345kB time=00:01:23.45 bitrate= 123.4kbits/s speed=1.23x
+            if (preg_match('/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/', $line, $matches)) {
+                $hours = (int)$matches[1];
+                $minutes = (int)$matches[2];
+                $seconds = (float)$matches[3];
+                $currentTime = $hours * 3600 + $minutes * 60 + $seconds;
+
+                // Calculer le pourcentage
+                if ($totalDuration > 0) {
+                    $progress = min(99, (int)(($currentTime / $totalDuration) * 100));
+                    
+                    // Mettre à jour la BDD toutes les 2 secondes seulement
+                    $now = time();
+                    if ($now - $lastUpdateTime >= 2) {
+                        $this->mapper->updateProgress($job->getId(), $progress);
+                        $this->logger->debug("Job {$job->getId()} progress: {$progress}%", ['app' => 'video_converter_fm']);
+                        $lastUpdateTime = $now;
+                    }
+                }
+            }
+        }
+
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        $returnCode = proc_close($process);
+
+        return $returnCode;
+    }
+
+    /**
+     * Obtient la durée totale d'une vidéo avec ffprobe
+     */
+    private function getVideoDuration(string $filePath): float {
+        if (!$filePath || !file_exists($filePath)) {
+            return 0;
+        }
+
+        $cmd = "ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " . escapeshellarg($filePath);
+        $output = shell_exec($cmd);
+        
+        return $output ? (float)trim($output) : 0;
     }
 }

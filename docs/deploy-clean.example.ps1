@@ -6,5 +6,5 @@
 
 # Usage:
 .\deploy-clean.ps1 `
-    -RemoteUser "votre_utilisateur" `
-    -RemoteHost "votre-serveur.example.com"
+    -RemoteUser "user_name" `
+    -RemoteHost "funambules-nc.example.com"

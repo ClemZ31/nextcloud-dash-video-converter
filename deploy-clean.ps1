@@ -46,6 +46,7 @@ New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 # Copier les fichiers nécessaires
 $filesToInclude = @(
     "appinfo",
+    "bin",
     "css",
     "img",
     "js",

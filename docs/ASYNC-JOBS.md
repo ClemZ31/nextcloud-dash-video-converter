@@ -1,6 +1,6 @@
 # Guide : Système de Jobs Asynchrones
 
-## 📋 Vue d'ensemble
+## Vue d'ensemble
 
 Le système de conversion vidéo fonctionne maintenant de manière **asynchrone** :
 1. L'utilisateur demande une conversion (via le menu contextuel)
@@ -8,7 +8,7 @@ Le système de conversion vidéo fonctionne maintenant de manière **asynchrone*
 3. Un **worker** tourne en arrière-plan et traite les jobs un par un
 4. Le statut du job est mis à jour (`processing` → `completed` ou `failed`)
 
-## 🚀 Installation et démarrage
+## Installation et démarrage
 
 ### 1. Déployer l'application
 
@@ -34,7 +34,7 @@ sudo -u www-data php /var/www/nextcloud/occ db:query "SHOW TABLES LIKE 'oc_video
 
 #### Option A : Mode manuel (pour tests)
 
-**⚠️ IMPORTANT : Toujours se placer dans le dossier de l'app d'abord !**
+* IMPORTANT : Toujours se placer dans le dossier de l'app d'abord !**
 
 ```bash
 # Méthode recommandée : utiliser le script de démarrage
@@ -89,11 +89,11 @@ chmod +x bin/test-jobs.sh
 ```
 
 Ce script affiche :
-- ✅ Si le worker tourne (PID)
-- ✅ Si la table existe
-- ✅ Liste des 10 derniers jobs
-- ✅ Statistiques par statut
-- ✅ Logs récents
+- Si le worker tourne (PID)
+- Si la table existe
+- Liste des 10 derniers jobs
+- Statistiques par statut
+- Logs récents
 
 ### Méthode 2 : Vérifications manuelles
 
@@ -148,7 +148,7 @@ sudo -u www-data php /var/www/nextcloud/occ db:query "
 "
 ```
 
-## 📊 API REST pour surveiller les jobs
+## API REST pour surveiller les jobs
 
 ### Lister tous les jobs de l'utilisateur
 ```bash
@@ -173,7 +173,7 @@ Réponse JSON :
 }
 ```
 
-## 🐛 Dépannage
+## Dépannage
 
 ### Le worker ne démarre pas
 ```bash
@@ -218,7 +218,7 @@ sudo -u www-data php /var/www/nextcloud/occ db:query "
 "
 ```
 
-## 📝 Commandes utiles
+## Commandes utiles
 
 | Action | Commande |
 |--------|----------|
@@ -228,20 +228,13 @@ sudo -u www-data php /var/www/nextcloud/occ db:query "
 | Compter jobs pending | `sudo -u www-data php /var/www/nextcloud/occ db:query "SELECT COUNT(*) FROM oc_video_jobs WHERE status='pending'"` |
 | Réinitialiser un job | `sudo -u www-data php /var/www/nextcloud/occ db:query "UPDATE oc_video_jobs SET status='pending', retry_count=0 WHERE id=123"` |
 
-## ✅ Checklist de validation
+## Checklist de validation
 
-- [ ] Migration SQL appliquée (table `oc_video_jobs` existe)
-- [ ] Worker démarré et visible dans `ps aux`
-- [ ] Logs du worker accessibles et actifs
-- [ ] Création d'un job de test réussie (via UI Files)
-- [ ] Job passe de `pending` → `processing` → `completed`
-- [ ] Fichier converti apparaît dans Nextcloud Files
-- [ ] API `/api/jobs` retourne la liste des jobs
-- [ ] API `/api/jobs/{id}` retourne le détail d'un job
-
-## 🎯 Prochaines étapes
-
-1. **Interface Vue** : Afficher la liste des jobs dans `ConversionsContent.vue`
-2. **Polling** : Rafraîchir automatiquement le statut des jobs toutes les 5s
-3. **Notifications** : Notifier l'utilisateur quand une conversion est terminée
-4. **Logs détaillés** : Parser la sortie FFmpeg pour suivre la progression en %
+-  Migration SQL appliquée (table `oc_video_jobs` existe)
+-  Worker démarré et visible dans `ps aux`
+-  Logs du worker accessibles et actifs
+-  Création d'un job de test réussie (via UI Files)
+-  Job passe de `pending` → `processing` → `completed`
+-  Fichier converti apparaît dans Nextcloud Files
+-  API `/api/jobs` retourne la liste des jobs
+-  API `/api/jobs/{id}` retourne le détail d'un job

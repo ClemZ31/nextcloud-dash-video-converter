@@ -9,13 +9,13 @@ Vous n'étiez pas dans le bon répertoire quand vous avez lancé le worker.
 **Utilisez toujours des chemins absolus !**
 
 ```bash
-# ❌ MAUVAIS (chemin relatif sans être dans le bon dossier)
+# MAUVAIS (chemin relatif sans être dans le bon dossier)
 sudo -u www-data nohup php bin/worker.php >> /var/log/nextcloud/video-worker.log 2>&1 &
 
-# ✅ BON (chemin absolu, fonctionne depuis n'importe où)
+# BON (chemin absolu, fonctionne depuis n'importe où)
 sudo -u www-data nohup php /var/www/nextcloud/apps/video_converter_fm/bin/worker.php >> /var/log/nextcloud/video-worker.log 2>&1 &
 
-# ✅ BON (chemin relatif mais vous êtes dans le bon dossier)
+# BON (chemin relatif mais vous êtes dans le bon dossier)
 cd /var/www/nextcloud/apps/video_converter_fm
 sudo -u www-data nohup php bin/worker.php >> /var/log/nextcloud/video-worker.log 2>&1 &
 ```
@@ -204,7 +204,7 @@ sudo bash /var/www/nextcloud/apps/video_converter_fm/bin/test-jobs.sh
 ```
 
 Ces scripts gèrent automatiquement :
-- ✅ Les permissions sur les logs
-- ✅ La vérification que le worker n'est pas déjà lancé
-- ✅ La sauvegarde du PID pour l'arrêt
-- ✅ L'affichage du statut et des logs
+- Les permissions sur les logs
+- La vérification que le worker n'est pas déjà lancé
+- La sauvegarde du PID pour l'arrêt
+- L'affichage du statut et des logs

@@ -6,7 +6,7 @@
 import { generateUrl } from '@nextcloud/router'
 import { getLoggerBuilder } from '@nextcloud/logger'
 import { createApp } from 'vue'
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHashHistory } from 'vue-router'
 import ConversionsApp from './views/ConversionsApp.vue'
 import { routes } from './routes.js'
 
@@ -16,7 +16,7 @@ const logger = getLoggerBuilder()
 	.build()
 
 const router = createRouter({
-	history: createWebHistory(generateUrl('/apps/video_converter_fm')),
+	history: createWebHashHistory(generateUrl('/apps/video_converter_fm')),
 	linkActiveClass: 'active',
 	routes,
 })

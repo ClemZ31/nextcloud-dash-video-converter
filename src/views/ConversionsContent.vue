@@ -50,21 +50,20 @@ ConversionsContent
 						</div>
 
 					<div class="job-status">
-						<!-- Spinner pour les jobs en cours de traitement -->
-						<NcLoadingIcon v-if="job.status === 'processing'" :size="20" class="job-spinner" />
+						<!-- Barre de progression pour tous les jobs en cours (pending ou processing avec progress) -->
+						<div v-if="job.status === 'pending' || (job.status === 'processing' && job.progress > 0 && job.progress < 100)" class="progress-container">
+							<NcProgressBar
+								:value="job.progress"
+								:error="false"
+								size="medium" />
+							<span class="progress-text">{{ job.progress }}%</span>
+						</div>
 						
-						<!-- Barre de progression seulement pour pending ou si progress > 0 -->
-						<NcProgressBar
-							v-else-if="job.status === 'pending' || (job.progress > 0 && job.progress < 100)"
-							:value="job.progress"
-							:error="false"
-							size="small" />
+						<!-- Spinner uniquement si processing SANS progression (début de traitement) -->
+						<NcLoadingIcon v-else-if="job.status === 'processing' && job.progress === 0" :size="20" class="job-spinner" />
 						
 						<div class="status-badge" :class="'status-' + job.status">
 							{{ getStatusLabel(job.status) }}
-							<span v-if="job.status === 'pending' || (job.status === 'processing' && job.progress > 0)">
-								{{ job.progress }}%
-							</span>
 						</div>
 						<div v-if="job.error_message" class="job-error">
 							{{ job.error_message }}
@@ -306,6 +305,22 @@ onUnmounted(() => {
 .job-spinner {
 	align-self: center;
 	opacity: 0.8;
+}
+
+.progress-container {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	margin-bottom: 8px;
+}
+
+.progress-text {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--color-primary-element);
+	min-width: 40px;
+	text-align: right;
 }
 
 .status-badge {
