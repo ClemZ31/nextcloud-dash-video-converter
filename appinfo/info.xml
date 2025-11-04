@@ -43,7 +43,6 @@
     </navigations>
 
     <dependencies>
-        <nextcloud min-version="25" max-version="32"/>
+        <nextcloud min-version="25" max-version="33"/>
     </dependencies>
 </info>
-
