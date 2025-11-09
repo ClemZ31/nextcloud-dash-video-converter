@@ -25,7 +25,7 @@
         },
         videoCodec: 'libx264',
         audioCodec: 'aac',
-        preset: 'medium',
+        preset: 'slow',
         keyframeInterval: 100,
         segmentDuration: 4,
         subtitles: true,

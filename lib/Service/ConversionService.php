@@ -107,7 +107,7 @@ class ConversionService {
      * Construit la commande FFmpeg à partir des paramètres
      */
     private function buildFFmpegCommand(string $file, array $params): string {
-        $preset = $params['preset'] ?? 'medium';
+        $preset = $params['preset'] ?? 'slow';
         $output = $params['type'] ?? 'mp4';
         $priority = $params['priority'] ?? '0';
         $movflags = $params['movflags'] ?? false;
