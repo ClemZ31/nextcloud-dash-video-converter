@@ -143,6 +143,9 @@ class ConversionService {
                     case 'x265':
                         $middleArgs = "-vcodec libx265 -preset " . escapeshellarg($preset) . " -strict -2";
                         break;
+                    case 'vp9':
+                        $middleArgs = "-vcodec libvpx-vp9 -preset " . escapeshellarg($preset);
+                        break;
                 }
             } else {
                 $middleArgs = "-preset " . escapeshellarg($preset) . " -strict -2";

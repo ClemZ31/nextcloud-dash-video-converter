@@ -22,6 +22,8 @@ class ConversionController extends Controller
 	private $userId;
 	private $conversionService;
 	private $jobMapper;
+	/** @var IRequest */
+	protected $request;
 
 	/**
 	 * @NoAdminRequired
@@ -34,6 +36,7 @@ class ConversionController extends Controller
 		VideoJobMapper $jobMapper
 	) {
 		parent::__construct($AppName, $request);
+		$this->request = $request;
 		$this->userId = $userId;
 		$this->conversionService = $conversionService;
 		$this->jobMapper = $jobMapper;
@@ -85,17 +88,56 @@ class ConversionController extends Controller
 				]);
 			}
 
+			/** @var IRequest $req */
+			$req = $this->request;
+
 			// Créer le job de conversion
 			$conversionParams = [
 				'type' => $type,
 				'preset' => $preset,
-				'priority' => $priority,
-				'movflags' => $movflags,
+				'priority' => (string) $priority,
+				'movflags' => filter_var($movflags, FILTER_VALIDATE_BOOLEAN),
 				'codec' => $codec,
 				'vbitrate' => $vbitrate,
 				'scale' => $scale,
-				'external' => $external,
+				'external' => (int) $external,
 			];
+
+			$audioCodec = $req ? $req->getParam('audioCodec') : null;
+			if (is_string($audioCodec) && $audioCodec !== '') {
+				$conversionParams['audio_codec'] = $audioCodec;
+			}
+
+			$selectedFormats = $req ? $req->getParam('selectedFormats') : null;
+			if (is_string($selectedFormats)) {
+				$decoded = json_decode($selectedFormats, true);
+				$selectedFormats = json_last_error() === JSON_ERROR_NONE ? $decoded : $selectedFormats;
+			}
+			if (!empty($selectedFormats)) {
+				$conversionParams['selected_formats'] = $selectedFormats;
+			}
+
+			$renditions = $req ? $req->getParam('renditions') : null;
+			if (is_string($renditions)) {
+				$decoded = json_decode($renditions, true);
+				$renditions = json_last_error() === JSON_ERROR_NONE ? $decoded : $renditions;
+			}
+			if (!empty($renditions)) {
+				$conversionParams['renditions'] = $renditions;
+			}
+
+			$profile = $req ? $req->getParam('profile') : null;
+			if (is_string($profile)) {
+				$decodedProfile = json_decode($profile, true);
+				$profile = json_last_error() === JSON_ERROR_NONE ? $decodedProfile : $profile;
+			}
+			if (!empty($profile)) {
+				$conversionParams['profile'] = $profile;
+				if (is_array($profile)) {
+					$conversionParams['segment_duration'] = $profile['segmentDuration'] ?? null;
+					$conversionParams['keyframe_interval'] = $profile['keyframeInterval'] ?? null;
+				}
+			}
 
 			$job = $this->conversionService->createJob(
 				$this->userId,
