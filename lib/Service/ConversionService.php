@@ -13,9 +13,9 @@ class ConversionService {
     private const RENDITION_PRESETS = [
         '1080p' => ['width' => 1920, 'height' => 1080, 'label' => '1080p'],
         '720p' => ['width' => 1280, 'height' => 720, 'label' => '720p'],
-        '480p' => ['width' => 854, 'height' => 480, 'label' => '480p'],
+        '480p' => ['width' => 854, 'height' => 480, 'label' => '480p'],  // will round to 852 if needed
         '360p' => ['width' => 640, 'height' => 360, 'label' => '360p'],
-        '240p' => ['width' => 426, 'height' => 240, 'label' => '240p'],
+        '240p' => ['width' => 426, 'height' => 240, 'label' => '240p'],  // will round to 426 if needed
         '144p' => ['width' => 256, 'height' => 144, 'label' => '144p'],
     ];
 
@@ -78,10 +78,12 @@ class ConversionService {
             }
 
             $this->logger->info("Processing job {$job->getId()}: {$localFile}", ['app' => 'video_converter_fm']);
+            echo "[video_converter_fm] execJob #{$job->getId()} file={$localFile}\n";
 
             // Construire et exécuter la commande FFmpeg
             $cmd = $this->buildFFmpegCommand($localFile, $params);
             $this->logger->info("Executing: {$cmd}", ['app' => 'video_converter_fm']);
+            echo "[video_converter_fm] Executing: {$cmd}\n";
 
             // Exécuter FFmpeg avec suivi de progression
             $returnCode = $this->executeFFmpegWithProgress($cmd, $job);
@@ -89,7 +91,11 @@ class ConversionService {
             if ($returnCode !== 0) {
                 $errorMsg = "FFmpeg failed with code {$returnCode}";
                 $this->logger->error($errorMsg, ['app' => 'video_converter_fm']);
+                echo "[video_converter_fm] {$errorMsg}\n";
                 $this->mapper->updateStatus($job->getId(), 'failed', $errorMsg);
+                // Increment retry count on failure
+                $job->setRetryCount($job->getRetryCount() + 1);
+                $this->mapper->update($job);
                 return false;
             }
 
@@ -201,13 +207,21 @@ class ConversionService {
             $keyframeInterval = 48;
         }
 
-        $filterComplex = $this->buildFilterComplex($enabledVariants);
-        $codecArgs = $this->buildCodecArgs($enabledVariants, $videoCodec, $audioCodec, $preset, $keyframeInterval);
+    $filterComplex = $this->buildFilterComplex($enabledVariants);
+    $hasAudio = $this->hasAudioStream($file);
+    $this->logger->debug("Input has audio: " . ($hasAudio ? 'yes' : 'no'), ['app' => 'video_converter_fm']);
+    $codecArgs = $this->buildCodecArgs($enabledVariants, $videoCodec, $audioCodec, $preset, $keyframeInterval, $hasAudio);
+
+            $this->logger->debug("Filter complex: " . $filterComplex, ['app' => 'video_converter_fm']);
+            $this->logger->debug("Codec args count: " . count($codecArgs), ['app' => 'video_converter_fm']);
+            foreach ($codecArgs as $i => $arg) {
+                $this->logger->debug("  Codec arg [{$i}]: " . $arg, ['app' => 'video_converter_fm']);
+            }
 
         $commands = [];
         foreach ($formats as $format) {
             if ($format === 'hls') {
-                $commands[] = $this->buildHlsCommand($file, $filterComplex, $codecArgs, $enabledVariants, $segmentDuration, $profile['hls'] ?? []);
+                $commands[] = $this->buildHlsCommand($file, $filterComplex, $codecArgs, $enabledVariants, $segmentDuration, $profile['hls'] ?? [], $hasAudio);
             } elseif ($format === 'dash') {
                 $commands[] = $this->buildDashCommand($file, $filterComplex, $codecArgs, $enabledVariants, $segmentDuration, $profile['dash'] ?? []);
             }
@@ -385,9 +399,17 @@ class ConversionService {
 
     private function buildFilterComplex(array $variants): string {
         $parts = [];
-        $splitOutputs = [];
         $variantCount = count($variants);
 
+        // Si une seule variante, pas besoin de split
+        if ($variantCount === 1) {
+            $variant = $variants[0];
+            // Force even dimensions: w=floor(w/2)*2:h=floor(h/2)*2
+            return sprintf('[0:v]scale=w=%d:h=%d:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2[v0_out]', $variant['width'], $variant['height']);
+        }
+
+        // Multiple variantes : utiliser split
+        $splitOutputs = [];
         for ($i = 0; $i < $variantCount; $i++) {
             $splitOutputs[] = sprintf('[v%d]', $i);
         }
@@ -395,13 +417,26 @@ class ConversionService {
         $parts[] = sprintf('[0:v]split=%d%s', $variantCount, implode('', $splitOutputs));
 
         foreach ($variants as $index => $variant) {
-            $parts[] = sprintf('[v%d]scale=w=%d:h=%d:force_original_aspect_ratio=decrease[v%1$d_out]', $index, $variant['width'], $variant['height']);
+            // Force even dimensions after scaling
+            $parts[] = sprintf('[v%d]scale=w=%d:h=%d:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2[v%1$d_out]', $index, $variant['width'], $variant['height']);
         }
 
         return implode(';', $parts);
     }
 
-    private function buildCodecArgs(array $variants, string $videoCodec, string $audioCodec, string $preset, int $keyframeInterval): array {
+    /**
+     * Vérifie si le fichier source possède au moins une piste audio
+     */
+    private function hasAudioStream(string $filePath): bool {
+        if (!$filePath || !file_exists($filePath)) {
+            return false;
+        }
+        $cmd = 'ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 ' . escapeshellarg($filePath) . ' 2>&1';
+        $output = shell_exec($cmd);
+        return trim((string)$output) !== '';
+    }
+
+    private function buildCodecArgs(array $variants, string $videoCodec, string $audioCodec, string $preset, int $keyframeInterval, bool $hasAudio): array {
         $args = [];
         foreach ($variants as $index => $variant) {
             $videoBitrate = $variant['videoBitrate'] . 'k';
@@ -423,12 +458,16 @@ class ConversionService {
                 sprintf('-metadata:s:v:%d variant_id=%s', $index, $nameSuffix ?: ('v' . $index)),
             ]);
 
-            $args[] = implode(' ', [
-                '-map 0:a:0',
-                sprintf('-c:a:%d %s', $index, $audioCodec),
-                sprintf('-b:a:%d %s', $index, $audioBitrate),
-                '-ac 2',
-            ]);
+            // For DASH: encode separate audio per variant
+            // For HLS multi-variant: we'll encode audio once and reference it
+            if ($hasAudio) {
+                $args[] = implode(' ', [
+                    '-map 0:a:0',
+                    sprintf('-c:a:%d %s', $index, $audioCodec),
+                    sprintf('-b:a:%d %s', $index, $audioBitrate),
+                    '-ac 2',
+                ]);
+            }
         }
 
         return $args;
@@ -440,12 +479,19 @@ class ConversionService {
         array $codecArgs,
         array $variants,
         int $segmentDuration,
-        array $options
+        array $options,
+        bool $hasAudio
     ): string {
         $basePath = dirname($file) . '/' . pathinfo($file, PATHINFO_FILENAME);
         $hlsDir = $basePath . '_hls';
-        $segmentPattern = $hlsDir . '/%v/segment_%03d.ts';
-        $playlistPattern = $hlsDir . '/%v/index.m3u8';
+        $singleVariant = count($variants) === 1;
+        if ($singleVariant) {
+            $segmentPattern = $hlsDir . '/' . $variants[0]['id'] . '/segment_%03d.ts';
+            $playlistPattern = $hlsDir . '/' . $variants[0]['id'] . '/index.m3u8';
+        } else {
+            $segmentPattern = $hlsDir . '/%v/segment_%03d.ts';
+            $playlistPattern = $hlsDir . '/%v/index.m3u8';
+        }
 
         $dirCommands = [sprintf('mkdir -p %s', escapeshellarg($hlsDir))];
         foreach ($variants as $variant) {
@@ -459,16 +505,30 @@ class ConversionService {
         if (($options['deleteSegments'] ?? false) === true) {
             $flags[] = 'delete_segments';
         }
+        // strftime_mkdir is not supported by older FFmpeg builds; drop it even if requested
         if (($options['strftimeMkdir'] ?? false) === true) {
-            $flags[] = 'strftime_mkdir';
+            $this->logger->debug('Dropping unsupported HLS flag: strftime_mkdir', ['app' => 'video_converter_fm']);
         }
+        // Sanitize against a whitelist of supported flags
+        $flags = $this->sanitizeHlsFlags($flags);
 
-        $varStreamMapParts = [];
-        foreach ($variants as $index => $variant) {
-            $name = preg_replace('/[^a-z0-9]+/i', '', strtolower($variant['id']));
-            $varStreamMapParts[] = sprintf('v:%d,a:%d name:%s', $index, $index, $name ?: 'v' . $index);
+        // For HLS multi-variant: encode audio ONCE; DASH uses codecArgs as-is
+        $hlsCodecArgs = $this->buildHlsCodecArgs($variants, $codecArgs, $hasAudio, $singleVariant);
+
+        $varStreamMap = '';
+        if (!$singleVariant) {
+            $varStreamMapParts = [];
+            foreach ($variants as $index => $variant) {
+                $name = preg_replace('/[^a-z0-9]+/i', '', strtolower($variant['id']));
+                // Reuse a single audio stream for all variants if audio present
+                if ($hasAudio) {
+                    $varStreamMapParts[] = sprintf('v:%d,a:0 name:%s', $index, $name ?: 'v' . $index);
+                } else {
+                    $varStreamMapParts[] = sprintf('v:%d name:%s', $index, $name ?: 'v' . $index);
+                }
+            }
+            $varStreamMap = implode(' ', $varStreamMapParts);
         }
-        $varStreamMap = implode(' ', $varStreamMapParts);
 
         $commandParts = array_merge(
             [
@@ -476,16 +536,19 @@ class ConversionService {
                 '-i ' . escapeshellarg($file),
                 '-filter_complex ' . escapeshellarg($filterComplex),
             ],
-            $codecArgs,
+            $hlsCodecArgs,
             [
                 '-f hls',
                 '-hls_time ' . max(1, $segmentDuration),
                 '-hls_playlist_type vod',
                 '-hls_segment_filename ' . escapeshellarg($segmentPattern),
-                '-master_pl_name master.m3u8',
-                '-var_stream_map ' . escapeshellarg($varStreamMap),
             ]
         );
+
+        if (!$singleVariant && $varStreamMap !== '') {
+            $commandParts[] = '-var_stream_map ' . escapeshellarg($varStreamMap);
+            $commandParts[] = '-master_pl_name master.m3u8';
+        }
 
         if (!empty($flags)) {
             $commandParts[] = '-hls_flags ' . escapeshellarg(implode('+', $flags));
@@ -493,7 +556,12 @@ class ConversionService {
 
         $commandParts[] = escapeshellarg($playlistPattern);
 
-        return implode(' && ', $dirCommands) . ' && ' . implode(' ', array_filter($commandParts));
+        $fullCommand = implode(' && ', $dirCommands) . ' && ' . implode(' ', array_filter($commandParts));
+        
+        // Log the full command for debugging
+        $this->logger->debug("HLS Command generated: " . $fullCommand, ['app' => 'video_converter_fm']);
+        
+        return $fullCommand;
     }
 
     private function buildDashCommand(
@@ -614,6 +682,16 @@ class ConversionService {
 
         $returnCode = proc_close($process);
 
+        // Log FFmpeg output if there was an error
+        if ($returnCode !== 0) {
+            $tail = substr($output, -2000);
+            $this->logger->error("FFmpeg failed with code {$returnCode}. Output: " . $tail, ['app' => 'video_converter_fm']);
+            // Also echo to worker log for easier live debugging
+            echo "[video_converter_fm] FFmpeg failed with code {$returnCode}. Tail stderr:\n" . $tail . "\n";
+            // Persist detailed error to DB immediately
+            $this->mapper->updateStatus($job->getId(), 'failed', "FFmpeg failed (code {$returnCode})\n" . $tail);
+        }
+
         return $returnCode;
     }
 
@@ -629,5 +707,58 @@ class ConversionService {
         $output = shell_exec($cmd);
         
         return $output ? (float)trim($output) : 0;
+    }
+
+    /**
+     * Keep only HLS flags that are supported broadly by FFmpeg in our environment
+     */
+    private function sanitizeHlsFlags(array $flags): array {
+        $allowed = [
+            'independent_segments',
+            'delete_segments',
+        ];
+        $filtered = array_values(array_intersect($flags, $allowed));
+        if ($flags !== $filtered) {
+            $this->logger->debug('Sanitized HLS flags: ' . implode('+', $filtered), ['app' => 'video_converter_fm']);
+        }
+        return $filtered;
+    }
+
+    /**
+     * Build HLS-specific codec args: strip audio from video-only args, encode audio once
+     */
+    private function buildHlsCodecArgs(array $variants, array $dashCodecArgs, bool $hasAudio, bool $singleVariant): array {
+        $hlsArgs = [];
+        
+        // Extract only video codec args (strip audio parts)
+        foreach ($dashCodecArgs as $arg) {
+            // Keep only video mapping lines (contain "-map \"[v")
+            if (strpos($arg, '-map "[v') !== false || strpos($arg, "-map '[v") !== false) {
+                $hlsArgs[] = $arg;
+            }
+        }
+
+        // For multi-variant HLS: encode audio ONCE (all variants reference a:0)
+        // For single-variant: keep audio as-is from dashCodecArgs
+        if ($hasAudio && !$singleVariant && count($variants) > 0) {
+            // Pick audio bitrate from highest quality variant (first after sort)
+            $audioBitrate = $variants[0]['audioBitrate'] . 'k';
+            $hlsArgs[] = implode(' ', [
+                '-map 0:a:0',
+                '-c:a:0 aac',
+                '-b:a:0 ' . $audioBitrate,
+                '-ac 2',
+            ]);
+        } elseif ($hasAudio && $singleVariant) {
+            // Single variant: keep the audio arg from dashCodecArgs
+            foreach ($dashCodecArgs as $arg) {
+                if (strpos($arg, '-map 0:a:0') !== false) {
+                    $hlsArgs[] = $arg;
+                    break;
+                }
+            }
+        }
+
+        return $hlsArgs;
     }
 }

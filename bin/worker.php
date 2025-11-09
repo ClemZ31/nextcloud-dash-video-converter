@@ -29,7 +29,10 @@ const MAX_RETRY = 3;
 
 // Logger (Nextcloud 32+ uses PSR-3 LoggerInterface)
 $logger = \OC::$server->get(LoggerInterface::class);
+echo "[video_converter_fm] Worker starting...\n";
 $logger->info("Video conversion worker started", ['app' => 'video_converter_fm']);
+// Ensure we operate from a stable directory to avoid getcwd() issues if launch path deleted
+@chdir('/');
 
 // Récupérer les services directement
 $db = \OC::$server->getDatabaseConnection();
@@ -43,14 +46,15 @@ while (true) {
         $pendingJobs = $mapper->findPendingJobs(1);
 
         if (count($pendingJobs) === 0) {
-            // Pas de job, attendre
             $logger->debug("No pending jobs, sleeping for " . SLEEP_INTERVAL . "s", ['app' => 'video_converter_fm']);
+            echo "[video_converter_fm] idle...\n";
             sleep(SLEEP_INTERVAL);
             continue;
         }
 
         $job = $pendingJobs[0];
-        $logger->info("Processing job #{$job->getId()}: {$job->getInputPath()}", ['app' => 'video_converter_fm']);
+    $logger->info("Processing job #{$job->getId()}: {$job->getInputPath()}", ['app' => 'video_converter_fm']);
+    echo "[video_converter_fm] Processing job #{$job->getId()} {$job->getInputPath()}\n";
 
         // Vérifier le nombre de tentatives
         if ($job->getRetryCount() >= MAX_RETRY) {
@@ -64,13 +68,11 @@ while (true) {
 
         if ($success) {
             $logger->info("Job #{$job->getId()} completed successfully", ['app' => 'video_converter_fm']);
+            echo "[video_converter_fm] Job #{$job->getId()} completed\n";
         } else {
             $logger->warning("Job #{$job->getId()} failed, will retry", ['app' => 'video_converter_fm']);
-            
-            // Si le job a échoué mais peut être retenté, le remettre en pending
-            if ($job->getRetryCount() < MAX_RETRY - 1) {
-                $mapper->updateStatus($job->getId(), 'pending');
-            }
+            echo "[video_converter_fm] Job #{$job->getId()} failed (retry=" . $job->getRetryCount() . ")\n";
+            // Do not automatically requeue blindly; leave as failed to inspect logs
         }
 
     } catch (\Exception $e) {
@@ -78,6 +80,7 @@ while (true) {
             'app' => 'video_converter_fm',
             'exception' => $e
         ]);
+        echo "[video_converter_fm] Worker exception: " . $e->getMessage() . "\n";
         
         // Attendre un peu avant de continuer en cas d'erreur critique
         sleep(SLEEP_INTERVAL);
