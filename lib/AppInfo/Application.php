@@ -23,7 +23,7 @@ class Application extends App implements IBootstrap {
     public function register(IRegistrationContext $context): void {
         // Register the ConversionController service so the router can instantiate it.
         // IRegistrationContext exposes registerService(...) rather than getContainer().
-        $appName = $this->getAppName(); // Capture app name outside the closure
+    $appName = 'video_converter_fm'; // Static app name to avoid relying on deprecated helpers
         
         // Register ConversionController
         $context->registerService('ConversionController', function($c) use ($appName) {
