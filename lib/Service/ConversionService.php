@@ -512,9 +512,6 @@ class ConversionService {
         // Sanitize against a whitelist of supported flags
         $flags = $this->sanitizeHlsFlags($flags);
 
-        // For HLS multi-variant: encode audio ONCE; DASH uses codecArgs as-is
-        $hlsCodecArgs = $this->buildHlsCodecArgs($variants, $codecArgs, $hasAudio, $singleVariant);
-
         $varStreamMap = '';
         if (!$singleVariant) {
             $varStreamMapParts = [];
@@ -522,7 +519,7 @@ class ConversionService {
                 $name = preg_replace('/[^a-z0-9]+/i', '', strtolower($variant['id']));
                 // Reuse a single audio stream for all variants if audio present
                 if ($hasAudio) {
-                    $varStreamMapParts[] = sprintf('v:%d,a:0 name:%s', $index, $name ?: 'v' . $index);
+                    $varStreamMapParts[] = sprintf('v:%d,a:%d name:%s', $index, $index, $name ?: 'v' . $index);
                 } else {
                     $varStreamMapParts[] = sprintf('v:%d name:%s', $index, $name ?: 'v' . $index);
                 }
@@ -536,7 +533,7 @@ class ConversionService {
                 '-i ' . escapeshellarg($file),
                 '-filter_complex ' . escapeshellarg($filterComplex),
             ],
-            $hlsCodecArgs,
+            $codecArgs,
             [
                 '-f hls',
                 '-hls_time ' . max(1, $segmentDuration),
@@ -724,41 +721,4 @@ class ConversionService {
         return $filtered;
     }
 
-    /**
-     * Build HLS-specific codec args: strip audio from video-only args, encode audio once
-     */
-    private function buildHlsCodecArgs(array $variants, array $dashCodecArgs, bool $hasAudio, bool $singleVariant): array {
-        $hlsArgs = [];
-        
-        // Extract only video codec args (strip audio parts)
-        foreach ($dashCodecArgs as $arg) {
-            // Keep only video mapping lines (contain "-map \"[v")
-            if (strpos($arg, '-map "[v') !== false || strpos($arg, "-map '[v") !== false) {
-                $hlsArgs[] = $arg;
-            }
-        }
-
-        // For multi-variant HLS: encode audio ONCE (all variants reference a:0)
-        // For single-variant: keep audio as-is from dashCodecArgs
-        if ($hasAudio && !$singleVariant && count($variants) > 0) {
-            // Pick audio bitrate from highest quality variant (first after sort)
-            $audioBitrate = $variants[0]['audioBitrate'] . 'k';
-            $hlsArgs[] = implode(' ', [
-                '-map 0:a:0',
-                '-c:a:0 aac',
-                '-b:a:0 ' . $audioBitrate,
-                '-ac 2',
-            ]);
-        } elseif ($hasAudio && $singleVariant) {
-            // Single variant: keep the audio arg from dashCodecArgs
-            foreach ($dashCodecArgs as $arg) {
-                if (strpos($arg, '-map 0:a:0') !== false) {
-                    $hlsArgs[] = $arg;
-                    break;
-                }
-            }
-        }
-
-        return $hlsArgs;
-    }
 }
