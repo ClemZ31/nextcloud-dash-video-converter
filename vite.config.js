@@ -5,7 +5,6 @@ import { resolve } from 'path'
 export default defineConfig({
 	plugins: [vue()],
 	build: {
-		outDir: '.',
 		emptyOutDir: false,
 		cssCodeSplit: false,
 		lib: {

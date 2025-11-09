@@ -24,6 +24,7 @@ class ConversionController extends Controller
 	private $jobMapper;
 	/** @var IRequest */
 	protected $request;
+    private $logger;
 
 	/**
 	 * @NoAdminRequired
@@ -33,13 +34,15 @@ class ConversionController extends Controller
 		IRequest $request,
 		$userId,
 		ConversionService $conversionService,
-		VideoJobMapper $jobMapper
+		VideoJobMapper $jobMapper,
+        \Psr\Log\LoggerInterface $logger
 	) {
 		parent::__construct($AppName, $request);
 		$this->request = $request;
 		$this->userId = $userId;
 		$this->conversionService = $conversionService;
 		$this->jobMapper = $jobMapper;
+        $this->logger = $logger;
 	}
 
 	public function getFile($directory, $fileName)
@@ -77,16 +80,31 @@ class ConversionController extends Controller
 			$inputPath = $directory . '/' . $nameOfFile;
 			
 			// Vérifier que le fichier existe dans le FS Nextcloud
-			\OC_Util::tearDownFS();
-			\OC_Util::setupFS($this->userId);
-			$localFile = Filesystem::getLocalFile($inputPath);
-			
-			if (!file_exists($localFile)) {
-				return json_encode([
-					"code" => 0,
-					"desc" => "File not found: " . $inputPath
-				]);
-			}
+            // Vérifier que le fichier existe dans le FS Nextcloud
+            \OC_Util::tearDownFS();
+            \OC_Util::setupFS($this->userId);
+
+            // D'ABORD, OBTENIR LA "VUE" DU SYSTÈME DE FICHIERS POUR L'UTILISATEUR
+            $userView = \OC\Files\Filesystem::getView();
+
+            // ENSUITE, VÉRIFIER SI LE FICHIER EXISTE DANS CETTE VUE
+            if (!$userView || !$userView->file_exists($inputPath)) {
+                return json_encode([
+                    "code" => 0,
+                    "desc" => "File not found or not readable: " . $inputPath
+                ]);
+            }
+
+            // ENFIN, OBTENIR LE CHEMIN LOCAL DU FICHIER À PARTIR DE LA VUE
+            $localFile = $userView->getLocalFile($inputPath);
+
+            // Vérifier que le fichier physique existe sur le disque
+            if (!file_exists($localFile)) {
+                return json_encode([
+                    "code" => 0,
+                    "desc" => "File exists in Nextcloud but not found on local storage: " . $localFile
+                ]);
+            }
 
 			/** @var IRequest $req */
 			$req = $this->request;
@@ -146,10 +164,10 @@ class ConversionController extends Controller
 				$conversionParams
 			);
 
-			\OC::$server->getLogger()->info(
-				"Conversion job #{$job->getId()} created for {$nameOfFile}",
-				['app' => 'video_converter_fm']
-			);
+            $this->logger->info(
+                "Conversion job #{$job->getId()} created for {$nameOfFile}",
+                ['app' => 'video_converter_fm']
+            );
 
 			return json_encode([
 				"code" => 1,
@@ -159,10 +177,10 @@ class ConversionController extends Controller
 			]);
 
 		} catch (\Throwable $e) {
-			\OC::$server->getLogger()->error(
-				'convertHere failed: ' . $e->getMessage(),
-				['app' => 'video_converter_fm', 'exception' => $e]
-			);
+            $this->logger->error(
+                'convertHere failed: ' . $e->getMessage(),
+                ['app' => 'video_converter_fm', 'exception' => $e]
+            );
 			return json_encode([
 				"code" => 0,
 				"desc" => "Server error: " . $e->getMessage()
