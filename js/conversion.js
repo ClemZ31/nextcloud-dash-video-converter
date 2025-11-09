@@ -59,6 +59,7 @@
     let isSubmitting = false
     let escKeyListener = null
     let cachedDefaults = null
+    let workingSettings = null
 
     console.log('[video_converter_fm] conversion integration script (modal v2) loaded')
 
@@ -401,15 +402,20 @@
                 audioInput.value = data.audioBitrate ?? preset.defaultAudio
             }
         })
-        dialog.querySelector('#vc-video-codec').value = settings.videoCodec
-        dialog.querySelector('#vc-audio-codec').value = settings.audioCodec
-        dialog.querySelector('#vc-preset').value = settings.preset
-        dialog.querySelector('#vc-subtitles').checked = !!settings.subtitles
-        updateAdvancedEstimation(dialog)
+    dialog.querySelector('#vc-video-codec').value = settings.videoCodec
+    dialog.querySelector('#vc-audio-codec').value = settings.audioCodec
+    dialog.querySelector('#vc-preset').value = settings.preset
+    dialog.querySelector('#vc-subtitles').checked = !!settings.subtitles
+    updateAdvancedEstimation(dialog, settings)
     }
 
     function collectAdvancedSettings(dialog) {
-        const settings = loadDefaults()
+        const base = workingSettings ? deepClone(workingSettings) : loadDefaults()
+        const settings = base
+
+        settings.formats = settings.formats || { dash: true, hls: true }
+        settings.renditions = settings.renditions || {}
+
         settings.formats.dash = dialog.querySelector('#vc-format-dash').checked
         settings.formats.hls = dialog.querySelector('#vc-format-hls').checked
 
@@ -429,6 +435,8 @@
         settings.audioCodec = dialog.querySelector('#vc-audio-codec').value
         settings.preset = dialog.querySelector('#vc-preset').value
         settings.subtitles = dialog.querySelector('#vc-subtitles').checked
+
+        workingSettings = settings
         return settings
     }
 
@@ -459,8 +467,8 @@
         }
     }
 
-    function updateAdvancedEstimation(dialog) {
-        const settings = collectAdvancedSettings(dialog)
+    function updateAdvancedEstimation(dialog, providedSettings) {
+        const settings = providedSettings || (workingSettings ? deepClone(workingSettings) : loadDefaults())
         const { estimates } = formatSummaryLines(settings)
         const estimationBox = dialog.querySelector('#vc-advanced-estimation')
         const warning = dialog.querySelector('#vc-format-warning')
@@ -659,11 +667,14 @@
 
     function handleAdvancedStart(dialog) {
         const settings = collectAdvancedSettings(dialog)
-        launchConversions(dialog, currentFile, currentContext, settings)
+        renderSimpleSummary(dialog, settings)
+        updateAdvancedEstimation(dialog, settings)
+        launchConversions(dialog, currentFile, currentContext, deepClone(settings))
     }
 
     function handleSimpleStart(dialog) {
-        const settings = loadDefaults()
+        const settings = workingSettings ? deepClone(workingSettings) : loadDefaults()
+        renderSimpleSummary(dialog, settings)
         launchConversions(dialog, currentFile, currentContext, settings)
     }
 
@@ -687,14 +698,22 @@
             case 'start-advanced':
                 handleAdvancedStart(dialog)
                 break
-            case 'load-defaults':
-                populateAdvancedForm(dialog, loadDefaults())
+            case 'load-defaults': {
+                const defaults = loadDefaults()
+                workingSettings = deepClone(defaults)
+                populateAdvancedForm(dialog, workingSettings)
+                renderSimpleSummary(dialog, workingSettings)
                 notify(tnc('video_converter_fm', 'Default settings loaded.'))
                 break
-            case 'save-defaults':
-                saveDefaults(collectAdvancedSettings(dialog))
+            }
+            case 'save-defaults': {
+                const updated = collectAdvancedSettings(dialog)
+                renderSimpleSummary(dialog, updated)
+                updateAdvancedEstimation(dialog, updated)
+                saveDefaults(updated)
                 notify(tnc('video_converter_fm', 'New settings saved as defaults.'))
                 break
+            }
             }
         })
 
@@ -707,9 +726,15 @@
             switchTab(dialog, tabButton.dataset.vcTab)
         })
 
-        dialog.querySelectorAll('.vc-rendition-toggle, .vc-section input, .vc-section select').forEach((input) => {
-            input.addEventListener('input', () => updateAdvancedEstimation(dialog))
-            input.addEventListener('change', () => updateAdvancedEstimation(dialog))
+        const handleAdvancedChange = () => {
+            const settings = collectAdvancedSettings(dialog)
+            renderSimpleSummary(dialog, settings)
+            updateAdvancedEstimation(dialog, settings)
+        }
+
+        dialog.querySelectorAll('.vc-tabpanel[data-vc-panel="advanced"] input, .vc-tabpanel[data-vc-panel="advanced"] select').forEach((input) => {
+            input.addEventListener('input', handleAdvancedChange)
+            input.addEventListener('change', handleAdvancedChange)
         })
     }
 
@@ -732,8 +757,9 @@
         ensureStyles()
         closeDialog()
 
-        const defaults = loadDefaults()
-        const markup = buildDialogHtml(filename, defaults)
+    const defaults = loadDefaults()
+    workingSettings = deepClone(defaults)
+    const markup = buildDialogHtml(filename, defaults)
         document.body.insertAdjacentHTML('beforeend', markup)
 
         currentDialog = document.getElementById('vc-modal')
@@ -742,8 +768,8 @@
         currentFile = filename
         currentContext = context
 
-        renderSimpleSummary(currentDialog, defaults)
-        populateAdvancedForm(currentDialog, defaults)
+    renderSimpleSummary(currentDialog, workingSettings)
+    populateAdvancedForm(currentDialog, workingSettings)
         bindDialogEvents(currentDialog)
 
         escKeyListener = (event) => {
@@ -774,7 +800,8 @@
             currentOverlay.remove()
             currentOverlay = null
         }
-        currentFile = null
+            workingSettings = null
+            currentFile = null
         currentContext = null
         isSubmitting = false
     }
