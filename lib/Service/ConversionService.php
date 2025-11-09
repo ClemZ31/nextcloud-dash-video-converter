@@ -10,6 +10,19 @@ use OC\Files\Filesystem;
  * Service centralisant la logique de conversion vidéo
  */
 class ConversionService {
+    private const RENDITION_PRESETS = [
+        '1080p' => ['width' => 1920, 'height' => 1080, 'label' => '1080p'],
+        '720p' => ['width' => 1280, 'height' => 720, 'label' => '720p'],
+        '480p' => ['width' => 854, 'height' => 480, 'label' => '480p'],
+        '360p' => ['width' => 640, 'height' => 360, 'label' => '360p'],
+        '240p' => ['width' => 426, 'height' => 240, 'label' => '240p'],
+        '144p' => ['width' => 256, 'height' => 144, 'label' => '144p'],
+    ];
+
+    private const SUPPORTED_VIDEO_CODECS = ['libx264', 'libx265', 'libvpx-vp9'];
+    private const SUPPORTED_AUDIO_CODECS = ['aac', 'opus', 'mp3'];
+    private const SUPPORTED_FFMPEG_PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'];
+
     private $mapper;
     private $logger;
 
@@ -107,6 +120,114 @@ class ConversionService {
      * Construit la commande FFmpeg à partir des paramètres
      */
     private function buildFFmpegCommand(string $file, array $params): string {
+        $advanced = $this->buildAdaptiveStreamingCommand($file, $params);
+        if ($advanced !== null) {
+            return $advanced;
+        }
+
+        return $this->buildLegacyCommand($file, $params);
+    }
+
+    private function buildAdaptiveStreamingCommand(string $file, array $params): ?string {
+        $profile = $params['profile'] ?? null;
+        if (is_string($profile)) {
+            $decodedProfile = json_decode($profile, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $profile = $decodedProfile;
+            }
+        }
+
+        if (!is_array($profile)) {
+            $profile = [];
+        }
+
+        $formats = $profile['formats'] ?? $params['selected_formats'] ?? [];
+        if (is_string($formats)) {
+            $decodedFormats = json_decode($formats, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $formats = $decodedFormats;
+            }
+        }
+
+        if (!is_array($formats)) {
+            $formats = [];
+        }
+
+        $formats = array_values(array_unique(array_filter(array_map(static function ($format) {
+            return is_string($format) ? strtolower($format) : null;
+        }, $formats))));
+        $formats = array_values(array_intersect($formats, ['dash', 'hls']));
+
+        if (empty($formats)) {
+            return null;
+        }
+
+        $renditions = $profile['renditions'] ?? $params['renditions'] ?? [];
+        if (is_string($renditions)) {
+            $decodedRenditions = json_decode($renditions, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $renditions = $decodedRenditions;
+            }
+        }
+
+        if (!is_array($renditions) || empty($renditions)) {
+            return null;
+        }
+
+        $enabledVariants = $this->extractEnabledRenditions($renditions);
+        if (empty($enabledVariants)) {
+            return null;
+        }
+
+        $videoCodec = $this->sanitizeVideoCodec($profile['videoCodec'] ?? $params['codec'] ?? 'libx264');
+        $audioCodec = $this->sanitizeAudioCodec($profile['audioCodec'] ?? $params['audio_codec'] ?? 'aac');
+        $preset = $this->sanitizePreset($profile['preset'] ?? $params['preset'] ?? 'slow');
+        $priority = $params['priority'] ?? $profile['priority'] ?? '0';
+        $niceValue = null;
+        if (is_numeric($priority)) {
+            $intPriority = (int)$priority;
+            if ($intPriority !== 0) {
+                $niceValue = $intPriority;
+            }
+        }
+
+        $segmentDuration = (int)($profile['segmentDuration'] ?? $params['segment_duration'] ?? 4);
+        if ($segmentDuration <= 0) {
+            $segmentDuration = 4;
+        }
+
+        $keyframeInterval = (int)($profile['keyframeInterval'] ?? $params['keyframe_interval'] ?? 48);
+        if ($keyframeInterval <= 0) {
+            $keyframeInterval = 48;
+        }
+
+        $filterComplex = $this->buildFilterComplex($enabledVariants);
+        $codecArgs = $this->buildCodecArgs($enabledVariants, $videoCodec, $audioCodec, $preset, $keyframeInterval);
+
+        $commands = [];
+        foreach ($formats as $format) {
+            if ($format === 'hls') {
+                $commands[] = $this->buildHlsCommand($file, $filterComplex, $codecArgs, $enabledVariants, $segmentDuration, $profile['hls'] ?? []);
+            } elseif ($format === 'dash') {
+                $commands[] = $this->buildDashCommand($file, $filterComplex, $codecArgs, $enabledVariants, $segmentDuration, $profile['dash'] ?? []);
+            }
+        }
+
+        $commands = array_values(array_filter($commands));
+        if (empty($commands)) {
+            return null;
+        }
+
+        if ($niceValue !== null) {
+            $commands = array_map(static function ($cmd) use ($niceValue) {
+                return preg_replace('/ffmpeg\s+-y/', 'nice -n ' . $niceValue . ' ffmpeg -y', $cmd, 1);
+            }, $commands);
+        }
+
+        return implode(' && ', $commands);
+    }
+
+    private function buildLegacyCommand(string $file, array $params): string {
         $preset = $params['preset'] ?? 'slow';
         $output = $params['type'] ?? 'mp4';
         $priority = $params['priority'] ?? '0';
@@ -196,6 +317,221 @@ class ConversionService {
         }
 
         return $cmd;
+    }
+
+    private function sanitizeVideoCodec($codec): string {
+        if (!is_string($codec)) {
+            return 'libx264';
+        }
+        $codec = strtolower($codec);
+        return in_array($codec, self::SUPPORTED_VIDEO_CODECS, true) ? $codec : 'libx264';
+    }
+
+    private function sanitizeAudioCodec($codec): string {
+        if (!is_string($codec)) {
+            return 'aac';
+        }
+        $codec = strtolower($codec);
+        return in_array($codec, self::SUPPORTED_AUDIO_CODECS, true) ? $codec : 'aac';
+    }
+
+    private function sanitizePreset($preset): string {
+        if (!is_string($preset)) {
+            return 'slow';
+        }
+        $preset = strtolower($preset);
+        return in_array($preset, self::SUPPORTED_FFMPEG_PRESETS, true) ? $preset : 'slow';
+    }
+
+    private function extractEnabledRenditions(array $renditions): array {
+        $variants = [];
+        foreach ($renditions as $key => $definition) {
+            if (!is_array($definition)) {
+                continue;
+            }
+            $enabled = $definition['enabled'] ?? true;
+            if (!$enabled) {
+                continue;
+            }
+            $preset = self::RENDITION_PRESETS[$key] ?? null;
+            if ($preset === null) {
+                continue;
+            }
+            [$width, $height] = [$preset['width'], $preset['height']];
+            $videoBitrate = (int)($definition['videoBitrate'] ?? 0);
+            $audioBitrate = (int)($definition['audioBitrate'] ?? 0);
+            if ($videoBitrate <= 0) {
+                $videoBitrate = 1000;
+            }
+            if ($audioBitrate <= 0) {
+                $audioBitrate = 128;
+            }
+            $variants[] = [
+                'id' => is_string($key) ? $key : (string)$key,
+                'label' => $definition['label'] ?? $preset['label'],
+                'width' => $width,
+                'height' => $height,
+                'videoBitrate' => $videoBitrate,
+                'audioBitrate' => $audioBitrate,
+            ];
+        }
+
+        usort($variants, static function ($a, $b) {
+            return $b['height'] <=> $a['height'];
+        });
+
+        return $variants;
+    }
+
+    private function buildFilterComplex(array $variants): string {
+        $parts = [];
+        $splitOutputs = [];
+        $variantCount = count($variants);
+
+        for ($i = 0; $i < $variantCount; $i++) {
+            $splitOutputs[] = sprintf('[v%d]', $i);
+        }
+
+        $parts[] = sprintf('[0:v]split=%d%s', $variantCount, implode('', $splitOutputs));
+
+        foreach ($variants as $index => $variant) {
+            $parts[] = sprintf('[v%d]scale=w=%d:h=%d:force_original_aspect_ratio=decrease[v%1$d_out]', $index, $variant['width'], $variant['height']);
+        }
+
+        return implode(';', $parts);
+    }
+
+    private function buildCodecArgs(array $variants, string $videoCodec, string $audioCodec, string $preset, int $keyframeInterval): array {
+        $args = [];
+        foreach ($variants as $index => $variant) {
+            $videoBitrate = $variant['videoBitrate'] . 'k';
+            $audioBitrate = $variant['audioBitrate'] . 'k';
+            $bufSize = ($variant['videoBitrate'] * 2) . 'k';
+            $nameSuffix = preg_replace('/[^a-z0-9]+/i', '', strtolower($variant['id']));
+
+            $args[] = implode(' ', [
+                sprintf('-map "[v%d_out]"', $index),
+                sprintf('-c:v:%d %s', $index, $videoCodec),
+                sprintf('-preset %s', $preset),
+                sprintf('-b:v:%d %s', $index, $videoBitrate),
+                sprintf('-maxrate:v:%d %s', $index, $videoBitrate),
+                sprintf('-bufsize:v:%d %s', $index, $bufSize),
+                sprintf('-g %d', $keyframeInterval),
+                sprintf('-keyint_min %d', $keyframeInterval),
+                '-sc_threshold 0',
+                sprintf('-metadata:s:v:%d variant_bitrate=%d', $index, $variant['videoBitrate'] * 1000),
+                sprintf('-metadata:s:v:%d variant_id=%s', $index, $nameSuffix ?: ('v' . $index)),
+            ]);
+
+            $args[] = implode(' ', [
+                '-map 0:a:0',
+                sprintf('-c:a:%d %s', $index, $audioCodec),
+                sprintf('-b:a:%d %s', $index, $audioBitrate),
+                '-ac 2',
+            ]);
+        }
+
+        return $args;
+    }
+
+    private function buildHlsCommand(
+        string $file,
+        string $filterComplex,
+        array $codecArgs,
+        array $variants,
+        int $segmentDuration,
+        array $options
+    ): string {
+        $basePath = dirname($file) . '/' . pathinfo($file, PATHINFO_FILENAME);
+        $hlsDir = $basePath . '_hls';
+        $segmentPattern = $hlsDir . '/%v/segment_%03d.ts';
+        $playlistPattern = $hlsDir . '/%v/index.m3u8';
+
+        $dirCommands = [sprintf('mkdir -p %s', escapeshellarg($hlsDir))];
+        foreach ($variants as $variant) {
+            $dirCommands[] = sprintf('mkdir -p %s', escapeshellarg($hlsDir . '/' . $variant['id']));
+        }
+
+        $flags = [];
+        if (($options['independentSegments'] ?? ($options['independent_segments'] ?? true)) === true) {
+            $flags[] = 'independent_segments';
+        }
+        if (($options['deleteSegments'] ?? false) === true) {
+            $flags[] = 'delete_segments';
+        }
+        if (($options['strftimeMkdir'] ?? false) === true) {
+            $flags[] = 'strftime_mkdir';
+        }
+
+        $varStreamMapParts = [];
+        foreach ($variants as $index => $variant) {
+            $name = preg_replace('/[^a-z0-9]+/i', '', strtolower($variant['id']));
+            $varStreamMapParts[] = sprintf('v:%d,a:%d name:%s', $index, $index, $name ?: 'v' . $index);
+        }
+        $varStreamMap = implode(' ', $varStreamMapParts);
+
+        $commandParts = array_merge(
+            [
+                'ffmpeg -y',
+                '-i ' . escapeshellarg($file),
+                '-filter_complex ' . escapeshellarg($filterComplex),
+            ],
+            $codecArgs,
+            [
+                '-f hls',
+                '-hls_time ' . max(1, $segmentDuration),
+                '-hls_playlist_type vod',
+                '-hls_segment_filename ' . escapeshellarg($segmentPattern),
+                '-master_pl_name master.m3u8',
+                '-var_stream_map ' . escapeshellarg($varStreamMap),
+            ]
+        );
+
+        if (!empty($flags)) {
+            $commandParts[] = '-hls_flags ' . escapeshellarg(implode('+', $flags));
+        }
+
+        $commandParts[] = escapeshellarg($playlistPattern);
+
+        return implode(' && ', $dirCommands) . ' && ' . implode(' ', array_filter($commandParts));
+    }
+
+    private function buildDashCommand(
+        string $file,
+        string $filterComplex,
+        array $codecArgs,
+        array $variants,
+        int $segmentDuration,
+        array $options
+    ): string {
+        $basePath = dirname($file) . '/' . pathinfo($file, PATHINFO_FILENAME);
+        $dashDir = $basePath . '_dash';
+        $manifestPath = $dashDir . '/manifest.mpd';
+
+        $dirCommand = sprintf('mkdir -p %s', escapeshellarg($dashDir));
+
+        $useTemplate = ($options['useTemplate'] ?? true) ? 1 : 0;
+        $useTimeline = ($options['useTimeline'] ?? true) ? 1 : 0;
+
+        $commandParts = array_merge(
+            [
+                'ffmpeg -y',
+                '-i ' . escapeshellarg($file),
+                '-filter_complex ' . escapeshellarg($filterComplex),
+            ],
+            $codecArgs,
+            [
+                '-f dash',
+                '-seg_duration ' . max(1, $segmentDuration),
+                '-use_template ' . $useTemplate,
+                '-use_timeline ' . $useTimeline,
+                '-init_seg_name ' . escapeshellarg('init_$RepresentationID$.m4s'),
+                '-media_seg_name ' . escapeshellarg('chunk_$RepresentationID$_$Number$.m4s'),
+                '-adaptation_sets "id=0,streams=v id=1,streams=a"',
+            ]
+        );
+
+        return $dirCommand . ' && ' . implode(' ', array_filter($commandParts)) . ' ' . escapeshellarg($manifestPath);
     }
 
     /**
