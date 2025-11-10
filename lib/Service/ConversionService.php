@@ -207,23 +207,36 @@ class ConversionService {
             $keyframeInterval = 48;
         }
 
-    $filterComplex = $this->buildFilterComplex($enabledVariants);
-    $hasAudio = $this->hasAudioStream($file);
-    $this->logger->debug("Input has audio: " . ($hasAudio ? 'yes' : 'no'), ['app' => 'video_converter_fm']);
-    $codecArgs = $this->buildCodecArgs($enabledVariants, $videoCodec, $audioCodec, $preset, $keyframeInterval, $hasAudio);
+        $hasAudio = $this->hasAudioStream($file);
+        $this->logger->debug("Input has audio: " . ($hasAudio ? 'yes' : 'no'), ['app' => 'video_converter_fm']);
 
-            $this->logger->debug("Filter complex: " . $filterComplex, ['app' => 'video_converter_fm']);
-            $this->logger->debug("Codec args count: " . count($codecArgs), ['app' => 'video_converter_fm']);
-            foreach ($codecArgs as $i => $arg) {
-                $this->logger->debug("  Codec arg [{$i}]: " . $arg, ['app' => 'video_converter_fm']);
+        // Build single filter graph for video (no audio filtering)
+        $filterData = $this->buildFilterComplex($enabledVariants, false, 'none');
+        $filterComplex = $filterData['graph'];
+        $videoLabels = $filterData['videoLabels'];
+        $this->logger->debug("Filter complex (video only): " . $filterComplex, ['app' => 'video_converter_fm']);
+
+        // Calculate max audio bitrate once for all formats
+        $maxAudioBitrate = 0;
+        if ($hasAudio) {
+            foreach ($enabledVariants as $variant) {
+                if (isset($variant['audioBitrate']) && $variant['audioBitrate'] > $maxAudioBitrate) {
+                    $maxAudioBitrate = $variant['audioBitrate'];
+                }
             }
+        }
+        $audioBitrate = $maxAudioBitrate > 0 ? ($maxAudioBitrate . 'k') : '128k';
 
         $commands = [];
         foreach ($formats as $format) {
+            // Build codec args WITHOUT audio - each format handles audio separately
+            $codecArgs = $this->buildVideoCodecArgs($enabledVariants, $videoLabels, $videoCodec, $preset, $keyframeInterval);
+            $this->logCodecArgs($codecArgs, $format);
+            
             if ($format === 'hls') {
-                $commands[] = $this->buildHlsCommand($file, $filterComplex, $codecArgs, $enabledVariants, $segmentDuration, $profile['hls'] ?? [], $hasAudio);
+                $commands[] = $this->buildHlsCommand($file, $filterComplex, $codecArgs, $enabledVariants, $segmentDuration, $profile['hls'] ?? [], $hasAudio, $audioBitrate, $audioCodec);
             } elseif ($format === 'dash') {
-                $commands[] = $this->buildDashCommand($file, $filterComplex, $codecArgs, $enabledVariants, $segmentDuration, $profile['dash'] ?? []);
+                $commands[] = $this->buildDashCommand($file, $filterComplex, $codecArgs, $enabledVariants, $segmentDuration, $profile['dash'] ?? [], $hasAudio, $audioBitrate, $audioCodec);
             }
         }
 
@@ -397,18 +410,39 @@ class ConversionService {
         return $variants;
     }
 
-    private function buildFilterComplex(array $variants): string {
-        $parts = [];
-        $variantCount = count($variants);
-
-        // Si une seule variante, pas besoin de split
-        if ($variantCount === 1) {
-            $variant = $variants[0];
-            // Force even dimensions: w=floor(w/2)*2:h=floor(h/2)*2
-            return sprintf('[0:v]scale=w=%d:h=%d:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2[v0_out]', $variant['width'], $variant['height']);
+    private function buildFilterComplex(array $variants, bool $hasAudio, string $audioMode = 'per_variant'): array {
+        if ($audioMode !== 'per_variant' && $audioMode !== 'shared') {
+            $audioMode = 'per_variant';
         }
 
-        // Multiple variantes : utiliser split
+        $parts = [];
+        $variantCount = count($variants);
+        $videoLabels = [];
+        $audioLabels = [];
+
+        if ($variantCount === 1) {
+            $variant = $variants[0];
+            $parts[] = sprintf('[0:v]scale=w=%d:h=%d:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2[v0_out]', $variant['width'], $variant['height']);
+            $videoLabels[] = '[v0_out]';
+
+            if ($hasAudio) {
+                if ($audioMode === 'shared') {
+                    $parts[] = '[0:a:0]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a0_out]';
+                    $audioLabels[] = '[a0_out]';
+                } else {
+                    // Always stick to the first source audio stream
+                    $audioLabels[] = '0:a:0';
+                }
+            }
+
+            return [
+                'graph' => implode(';', $parts),
+                'videoLabels' => $videoLabels,
+                'audioLabels' => $audioLabels,
+            ];
+        }
+
+        // Video splitting for multiple variants
         $splitOutputs = [];
         for ($i = 0; $i < $variantCount; $i++) {
             $splitOutputs[] = sprintf('[v%d]', $i);
@@ -417,11 +451,35 @@ class ConversionService {
         $parts[] = sprintf('[0:v]split=%d%s', $variantCount, implode('', $splitOutputs));
 
         foreach ($variants as $index => $variant) {
-            // Force even dimensions after scaling
             $parts[] = sprintf('[v%d]scale=w=%d:h=%d:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2[v%1$d_out]', $index, $variant['width'], $variant['height']);
+            $videoLabels[] = sprintf('[v%d_out]', $index);
         }
 
-        return implode(';', $parts);
+        if ($hasAudio) {
+            if ($audioMode === 'shared') {
+                $parts[] = '[0:a:0]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a0_out]';
+                $audioLabels[] = '[a0_out]';
+            } else {
+                $audioSplitOutputs = [];
+                for ($i = 0; $i < $variantCount; $i++) {
+                    $audioSplitOutputs[] = sprintf('[a%d]', $i);
+                }
+
+                $parts[] = sprintf('[0:a:0]asplit=%d%s', $variantCount, implode('', $audioSplitOutputs));
+
+                foreach ($audioSplitOutputs as $index => $label) {
+                    // Normalize audio to a common layout so each stream is independent
+                    $parts[] = sprintf('%saformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a%d_out]', $label, $index);
+                    $audioLabels[] = sprintf('[a%d_out]', $index);
+                }
+            }
+        }
+
+        return [
+            'graph' => implode(';', $parts),
+            'videoLabels' => $videoLabels,
+            'audioLabels' => $audioLabels,
+        ];
     }
 
     /**
@@ -431,21 +489,33 @@ class ConversionService {
         if (!$filePath || !file_exists($filePath)) {
             return false;
         }
-        $cmd = 'ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 ' . escapeshellarg($filePath) . ' 2>&1';
+        $cmd = 'ffprobe -v error -select_streams a:0 -show_entries stream=index -of csv=p=0 ' . escapeshellarg($filePath) . ' 2>&1';
         $output = shell_exec($cmd);
         return trim((string)$output) !== '';
     }
 
-    private function buildCodecArgs(array $variants, string $videoCodec, string $audioCodec, string $preset, int $keyframeInterval, bool $hasAudio): array {
+    /**
+     * Build codec arguments for VIDEO streams only (no audio)
+     */
+    private function buildVideoCodecArgs(
+        array $variants,
+        array $videoLabels,
+        string $videoCodec,
+        string $preset,
+        int $keyframeInterval
+    ): array {
         $args = [];
+
         foreach ($variants as $index => $variant) {
+            $videoLabel = $videoLabels[$index] ?? sprintf('[v%d_out]', $index);
             $videoBitrate = $variant['videoBitrate'] . 'k';
-            $audioBitrate = $variant['audioBitrate'] . 'k';
             $bufSize = ($variant['videoBitrate'] * 2) . 'k';
             $nameSuffix = preg_replace('/[^a-z0-9]+/i', '', strtolower($variant['id']));
 
+            $videoMapTarget = escapeshellarg($videoLabel);
+
             $args[] = implode(' ', [
-                sprintf('-map "[v%d_out]"', $index),
+                sprintf('-map %s', $videoMapTarget),
                 sprintf('-c:v:%d %s', $index, $videoCodec),
                 sprintf('-preset %s', $preset),
                 sprintf('-b:v:%d %s', $index, $videoBitrate),
@@ -457,20 +527,16 @@ class ConversionService {
                 sprintf('-metadata:s:v:%d variant_bitrate=%d', $index, $variant['videoBitrate'] * 1000),
                 sprintf('-metadata:s:v:%d variant_id=%s', $index, $nameSuffix ?: ('v' . $index)),
             ]);
-
-            // For DASH: encode separate audio per variant
-            // For HLS multi-variant: we'll encode audio once and reference it
-            if ($hasAudio) {
-                $args[] = implode(' ', [
-                    '-map 0:a:0',
-                    sprintf('-c:a:%d %s', $index, $audioCodec),
-                    sprintf('-b:a:%d %s', $index, $audioBitrate),
-                    '-ac 2',
-                ]);
-            }
         }
 
         return $args;
+    }
+
+    private function logCodecArgs(array $codecArgs, string $context): void {
+        $this->logger->debug(sprintf('Codec args (%s) count: %d', $context, count($codecArgs)), ['app' => 'video_converter_fm']);
+        foreach ($codecArgs as $i => $arg) {
+            $this->logger->debug(sprintf('  Codec arg (%s)[%d]: %s', $context, $i, $arg), ['app' => 'video_converter_fm']);
+        }
     }
 
     private function buildHlsCommand(
@@ -480,7 +546,9 @@ class ConversionService {
         array $variants,
         int $segmentDuration,
         array $options,
-        bool $hasAudio
+        bool $hasAudio,
+        string $audioBitrate,
+        string $audioCodec
     ): string {
         $basePath = dirname($file) . '/' . pathinfo($file, PATHINFO_FILENAME);
         $hlsDir = $basePath . '_hls';
@@ -512,19 +580,39 @@ class ConversionService {
         // Sanitize against a whitelist of supported flags
         $flags = $this->sanitizeHlsFlags($flags);
 
+        // Build var_stream_map: use agroup for shared audio across all video renditions
+        // This is the correct way for HLS to share a single audio track across multiple video variants
         $varStreamMap = '';
         if (!$singleVariant) {
             $varStreamMapParts = [];
             foreach ($variants as $index => $variant) {
                 $name = preg_replace('/[^a-z0-9]+/i', '', strtolower($variant['id']));
-                // Reuse a single audio stream for all variants if audio present
                 if ($hasAudio) {
-                    $varStreamMapParts[] = sprintf('v:%d,a:%d name:%s', $index, $index, $name ?: 'v' . $index);
+                    // All video variants share the same audio group (note the comma between agroup and name!)
+                    $varStreamMapParts[] = sprintf('v:%d,agroup:audio,name:%s', $index, $name ?: 'v' . $index);
                 } else {
-                    $varStreamMapParts[] = sprintf('v:%d name:%s', $index, $name ?: 'v' . $index);
+                    $varStreamMapParts[] = sprintf('v:%d,name:%s', $index, $name ?: 'v' . $index);
                 }
             }
+            
+            // Add the shared audio stream as a separate entry with explicit name
+            if ($hasAudio) {
+                $varStreamMapParts[] = 'a:0,agroup:audio,name:audio';
+            }
+            
             $varStreamMap = implode(' ', $varStreamMapParts);
+        }
+
+        // For HLS: Map one audio stream that all variants will share via agroup
+        $audioArgs = [];
+        if ($hasAudio) {
+            // Single audio stream for all video variants (shared via agroup)
+            $audioArgs = [
+                '-map 0:a:0',
+                sprintf('-c:a:0 %s', $audioCodec),
+                sprintf('-b:a:0 %s', $audioBitrate),
+                '-ac 2',
+            ];
         }
 
         $commandParts = array_merge(
@@ -534,6 +622,7 @@ class ConversionService {
                 '-filter_complex ' . escapeshellarg($filterComplex),
             ],
             $codecArgs,
+            $audioArgs,
             [
                 '-f hls',
                 '-hls_time ' . max(1, $segmentDuration),
@@ -567,7 +656,10 @@ class ConversionService {
         array $codecArgs,
         array $variants,
         int $segmentDuration,
-        array $options
+        array $options,
+        bool $hasAudio,
+        string $audioBitrate,
+        string $audioCodec
     ): string {
         $basePath = dirname($file) . '/' . pathinfo($file, PATHINFO_FILENAME);
         $dashDir = $basePath . '_dash';
@@ -578,6 +670,23 @@ class ConversionService {
         $useTemplate = ($options['useTemplate'] ?? true) ? 1 : 0;
         $useTimeline = ($options['useTimeline'] ?? true) ? 1 : 0;
 
+        // DASH adaptation sets: Use generic stream type selectors
+        // "id=0,streams=v" selects ALL video streams (regardless of count)
+        // "id=1,streams=a" selects ALL audio streams
+        // This is the correct way to handle multiple video variants with shared audio
+        $adaptationSets = '"id=0,streams=v id=1,streams=a"';
+
+        // For DASH: Map audio with stream index :0
+        $audioArgs = [];
+        if ($hasAudio) {
+            $audioArgs = [
+                '-map 0:a:0',
+                sprintf('-c:a:0 %s', $audioCodec),  // WITH stream index for DASH
+                sprintf('-b:a:0 %s', $audioBitrate),
+                '-ac 2',
+            ];
+        }
+
         $commandParts = array_merge(
             [
                 'ffmpeg -y',
@@ -585,6 +694,7 @@ class ConversionService {
                 '-filter_complex ' . escapeshellarg($filterComplex),
             ],
             $codecArgs,
+            $audioArgs,
             [
                 '-f dash',
                 '-seg_duration ' . max(1, $segmentDuration),
@@ -592,7 +702,7 @@ class ConversionService {
                 '-use_timeline ' . $useTimeline,
                 '-init_seg_name ' . escapeshellarg('init_$RepresentationID$.m4s'),
                 '-media_seg_name ' . escapeshellarg('chunk_$RepresentationID$_$Number$.m4s'),
-                '-adaptation_sets "id=0,streams=v id=1,streams=a"',
+                '-adaptation_sets ' . $adaptationSets,
             ]
         );
 
