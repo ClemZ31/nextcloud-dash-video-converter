@@ -228,17 +228,27 @@ class ConversionService {
         $audioBitrate = $maxAudioBitrate > 0 ? ($maxAudioBitrate . 'k') : '128k';
 
         $commands = [];
-        foreach ($formats as $format) {
-            // Build codec args WITHOUT audio - each format handles audio separately
-            $codecArgs = $this->buildVideoCodecArgs($enabledVariants, $videoLabels, $videoCodec, $preset, $keyframeInterval);
-            $this->logCodecArgs($codecArgs, $format);
-            
-            if ($format === 'hls') {
-                $commands[] = $this->buildHlsCommand($file, $filterComplex, $codecArgs, $enabledVariants, $segmentDuration, $profile['hls'] ?? [], $hasAudio, $audioBitrate, $audioCodec);
-            } elseif ($format === 'dash') {
-                $commands[] = $this->buildDashCommand($file, $filterComplex, $codecArgs, $enabledVariants, $segmentDuration, $profile['dash'] ?? [], $hasAudio, $audioBitrate, $audioCodec);
-            }
-        }
+
+        // Build codec args without audio - DASH command will generate audio
+        $codecArgs = $this->buildVideoCodecArgs($enabledVariants, $videoLabels, $videoCodec, $preset, $keyframeInterval);
+        $this->logCodecArgs($codecArgs, 'cmaf-unified');
+
+        // Determine if need to generate HLS manifest
+        $generateHls = in_array('hls', $formats, true);
+
+        // Build sole command DASH (CMAF) that generates also HLS playlist if necessary
+        $commands[] = $this->buildDashCommand(
+            $file,
+            $filterComplex,
+            $codecArgs,
+            $enabledVariants,
+            $segmentDuration,
+            $profile['dash'] ?? [],
+            $hasAudio,
+            $audioBitrate,
+            $audioCodec,
+            $generateHls
+        );
 
         $commands = array_values(array_filter($commands));
         if (empty($commands)) {
@@ -539,117 +549,6 @@ class ConversionService {
         }
     }
 
-    private function buildHlsCommand(
-        string $file,
-        string $filterComplex,
-        array $codecArgs,
-        array $variants,
-        int $segmentDuration,
-        array $options,
-        bool $hasAudio,
-        string $audioBitrate,
-        string $audioCodec
-    ): string {
-        $basePath = dirname($file) . '/' . pathinfo($file, PATHINFO_FILENAME);
-        $hlsDir = $basePath . '_hls';
-        $singleVariant = count($variants) === 1;
-        if ($singleVariant) {
-            $segmentPattern = $hlsDir . '/' . $variants[0]['id'] . '/segment_%03d.ts';
-            $playlistPattern = $hlsDir . '/' . $variants[0]['id'] . '/index.m3u8';
-        } else {
-            $segmentPattern = $hlsDir . '/%v/segment_%03d.ts';
-            $playlistPattern = $hlsDir . '/%v/index.m3u8';
-        }
-
-        $dirCommands = [sprintf('mkdir -p %s', escapeshellarg($hlsDir))];
-        foreach ($variants as $variant) {
-            $dirCommands[] = sprintf('mkdir -p %s', escapeshellarg($hlsDir . '/' . $variant['id']));
-        }
-
-        $flags = [];
-        if (($options['independentSegments'] ?? ($options['independent_segments'] ?? true)) === true) {
-            $flags[] = 'independent_segments';
-        }
-        if (($options['deleteSegments'] ?? false) === true) {
-            $flags[] = 'delete_segments';
-        }
-        // strftime_mkdir is not supported by older FFmpeg builds; drop it even if requested
-        if (($options['strftimeMkdir'] ?? false) === true) {
-            $this->logger->debug('Dropping unsupported HLS flag: strftime_mkdir', ['app' => 'video_converter_fm']);
-        }
-        // Sanitize against a whitelist of supported flags
-        $flags = $this->sanitizeHlsFlags($flags);
-
-        // Build var_stream_map: use agroup for shared audio across all video renditions
-        // This is the correct way for HLS to share a single audio track across multiple video variants
-        $varStreamMap = '';
-        if (!$singleVariant) {
-            $varStreamMapParts = [];
-            foreach ($variants as $index => $variant) {
-                $name = preg_replace('/[^a-z0-9]+/i', '', strtolower($variant['id']));
-                if ($hasAudio) {
-                    // All video variants share the same audio group (note the comma between agroup and name!)
-                    $varStreamMapParts[] = sprintf('v:%d,agroup:audio,name:%s', $index, $name ?: 'v' . $index);
-                } else {
-                    $varStreamMapParts[] = sprintf('v:%d,name:%s', $index, $name ?: 'v' . $index);
-                }
-            }
-            
-            // Add the shared audio stream as a separate entry with explicit name
-            if ($hasAudio) {
-                $varStreamMapParts[] = 'a:0,agroup:audio,name:audio';
-            }
-            
-            $varStreamMap = implode(' ', $varStreamMapParts);
-        }
-
-        // For HLS: Map one audio stream that all variants will share via agroup
-        $audioArgs = [];
-        if ($hasAudio) {
-            // Single audio stream for all video variants (shared via agroup)
-            $audioArgs = [
-                '-map 0:a:0',
-                sprintf('-c:a:0 %s', $audioCodec),
-                sprintf('-b:a:0 %s', $audioBitrate),
-                '-ac 2',
-            ];
-        }
-
-        $commandParts = array_merge(
-            [
-                'ffmpeg -y',
-                '-i ' . escapeshellarg($file),
-                '-filter_complex ' . escapeshellarg($filterComplex),
-            ],
-            $codecArgs,
-            $audioArgs,
-            [
-                '-f hls',
-                '-hls_time ' . max(1, $segmentDuration),
-                '-hls_playlist_type vod',
-                '-hls_segment_filename ' . escapeshellarg($segmentPattern),
-            ]
-        );
-
-        if (!$singleVariant && $varStreamMap !== '') {
-            $commandParts[] = '-var_stream_map ' . escapeshellarg($varStreamMap);
-            $commandParts[] = '-master_pl_name master.m3u8';
-        }
-
-        if (!empty($flags)) {
-            $commandParts[] = '-hls_flags ' . escapeshellarg(implode('+', $flags));
-        }
-
-        $commandParts[] = escapeshellarg($playlistPattern);
-
-        $fullCommand = implode(' && ', $dirCommands) . ' && ' . implode(' ', array_filter($commandParts));
-        
-        // Log the full command for debugging
-        $this->logger->debug("HLS Command generated: " . $fullCommand, ['app' => 'video_converter_fm']);
-        
-        return $fullCommand;
-    }
-
     private function buildDashCommand(
         string $file,
         string $filterComplex,
@@ -659,7 +558,8 @@ class ConversionService {
         array $options,
         bool $hasAudio,
         string $audioBitrate,
-        string $audioCodec
+        string $audioCodec,
+        bool $generateHlsPlaylist = false
     ): string {
         $basePath = dirname($file) . '/' . pathinfo($file, PATHINFO_FILENAME);
         $dashDir = $basePath . '_dash';
@@ -705,6 +605,14 @@ class ConversionService {
                 '-adaptation_sets ' . $adaptationSets,
             ]
         );
+
+        /**
+         * If $generateHlsPlaylist is true, then add flags so FFmpeg also creates HLS manifest (.m3u8)
+         */
+        if ($generateHlsPlaylist) {
+            $commandParts[] = '-hls_playlist 1';
+            $commandParts[] = '-hls_master_pl_name master.m3u8'; // Nom du fichier HLS
+        }
 
         return $dirCommand . ' && ' . implode(' ', array_filter($commandParts)) . ' ' . escapeshellarg($manifestPath);
     }
@@ -814,21 +722,6 @@ class ConversionService {
         $output = shell_exec($cmd);
         
         return $output ? (float)trim($output) : 0;
-    }
-
-    /**
-     * Keep only HLS flags that are supported broadly by FFmpeg in our environment
-     */
-    private function sanitizeHlsFlags(array $flags): array {
-        $allowed = [
-            'independent_segments',
-            'delete_segments',
-        ];
-        $filtered = array_values(array_intersect($flags, $allowed));
-        if ($flags !== $filtered) {
-            $this->logger->debug('Sanitized HLS flags: ' . implode('+', $filtered), ['app' => 'video_converter_fm']);
-        }
-        return $filtered;
     }
 
 }
