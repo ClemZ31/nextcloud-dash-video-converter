@@ -15,14 +15,29 @@ return [
             'verb' => 'POST'
         ],
         [
+            'name' => 'conversion#listJobs',
+            'url'  => 'api/jobs',
+            'verb' => 'GET'
+        ],
+        [
+            'name' => 'conversion#listAllJobs',
+            'url'  => 'api/jobs/all',
+            'verb' => 'GET'
+        ],
+        [
             'name' => 'conversion#getJobStatus',
             'url'  => 'api/jobs/{jobId}',
             'verb' => 'GET'
         ],
         [
-            'name' => 'conversion#listJobs',
-            'url'  => 'api/jobs',
-            'verb' => 'GET'
+            'name' => 'conversion#deleteJob',
+            'url'  => 'api/jobs/{jobId}',
+            'verb' => 'DELETE'
+        ],
+        [
+            'name' => 'conversion#probeVideo',
+            'url'  => 'api/video/probe',
+            'verb' => 'POST'
         ],
         [
             'name' => 'page#index', 

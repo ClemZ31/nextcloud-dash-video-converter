@@ -36,20 +36,21 @@ ConversionsContent
 							<NcIconSvgWrapper :svg="convertIcon" :size="32" />
 						</div>
 						
-						<div class="job-info">
-							<div class="job-title">{{ getFileName(job.input_path) }}</div>
-							<div class="job-formats">
-								{{ t('video_converter_fm', 'Format: {format}', { format: getFormats(job.output_formats) }) }}
-							</div>
-							<div class="job-meta">
-								<span class="job-date">{{ formatDate(job.created_at) }}</span>
-								<span v-if="job.completed_at" class="job-duration">
-									· {{ formatDuration(job.created_at, job.completed_at) }}
-								</span>
-							</div>
+					<div class="job-info">
+						<div class="job-title">{{ getFileName(job.input_path) }}</div>
+						<div class="job-formats">
+							{{ t('video_converter_fm', 'Format: {format}', { format: getFormats(job.output_formats) }) }}
 						</div>
-
-					<div class="job-status">
+						<div class="job-meta">
+							<span class="job-date">{{ formatDate(job.created_at) }}</span>
+							<span v-if="job.completed_at" class="job-duration">
+								· {{ formatDuration(job.created_at, job.completed_at) }}
+							</span>
+						</div>
+						<div class="job-creator">
+							{{ t('video_converter_fm', 'Créé par : {user}', { user: job.user_id }) }}
+						</div>
+					</div>					<div class="job-status">
 						<!-- Barre de progression pour tous les jobs en cours (pending ou processing avec progress) -->
 						<div v-if="job.status === 'pending' || (job.status === 'processing' && job.progress > 0 && job.progress < 100)" class="progress-container">
 							<NcProgressBar
@@ -68,23 +69,43 @@ ConversionsContent
 						<div v-if="job.error_message" class="job-error">
 							{{ job.error_message }}
 						</div>
+
+						<!-- Actions -->
+						<div class="job-actions">
+							<!-- Show delete button only if job belongs to current user -->
+							<NcButton
+								v-if="canDeleteJob(job)"
+								type="tertiary"
+								size="small"
+								class="delete-btn"
+								@click="onDelete(job)">
+								{{ t('video_converter_fm', 'Supprimer') }}
+							</NcButton>
+							<!-- Show username badge if viewing all jobs and job belongs to someone else -->
+							<span v-if="showAllJobs && job.user_id !== currentUserId" class="job-owner-badge">
+								{{ job.user_id }}
+							</span>
+						</div>
 					</div>
 					</div>
 				</div>
 			</div>
 
-			<!-- État vide pour les paramètres -->
-			<NcEmptyContent
-				v-else-if="section === 'settings'"
-				:name="t('video_converter_fm', 'Paramètres')"
-				:description="t('video_converter_fm', 'Contenu des paramètres à définir.')">
-				<template #icon>
-					<img
-						alt=""
-						:src="coreSettingsIcon"
-						class="empty-content-icon">
-				</template>
-			</NcEmptyContent>
+			<!-- Paramètres -->
+			<div v-else-if="section === 'settings'" class="settings-section">
+				<h2>{{ t('video_converter_fm', 'Paramètres') }}</h2>
+				
+				<div class="setting-item">
+					<NcCheckboxRadioSwitch
+						v-model="showAllJobs"
+						@update:checked="onToggleShowAll">
+						{{ t('video_converter_fm', 'Voir toutes les conversions') }}
+					</NcCheckboxRadioSwitch>
+					<p class="setting-description">
+						{{ t('video_converter_fm', 'Affiche les conversions de tous les utilisateurs dans l\'onglet Conversions') }}
+					</p>
+				</div>
+			</div>
 		</div>
 	</NcAppContent>
 </template>
@@ -95,7 +116,7 @@ import { useRoute } from 'vue-router'
 import { generateUrl } from '@nextcloud/router'
 import { translate as t } from '@nextcloud/l10n'
 import axios from '@nextcloud/axios'
-import { NcAppContent, NcEmptyContent, NcIconSvgWrapper, NcLoadingIcon, NcProgressBar } from '@nextcloud/vue'
+import { NcAppContent, NcEmptyContent, NcIconSvgWrapper, NcLoadingIcon, NcProgressBar, NcButton, NcCheckboxRadioSwitch } from '@nextcloud/vue'
 import convertIcon from '../../img/convert_icon.svg?raw'
 
 const route = useRoute()
@@ -113,21 +134,41 @@ const coreSettingsIcon = generateUrl('/core/img/actions/settings.svg')
 // Jobs state
 const jobs = ref([])
 const loading = ref(true)
+const currentUserId = ref(null)
+const showAllJobs = ref(localStorage.getItem('video_converter_fm_show_all_jobs') === 'true')
 let pollingInterval = null
 
 // Fetch jobs from API
 const fetchJobs = async () => {
 	try {
-		const url = generateUrl('/apps/video_converter_fm') + '/api/jobs'
+		const endpoint = showAllJobs.value ? '/api/jobs/all' : '/api/jobs'
+		const url = generateUrl('/apps/video_converter_fm') + endpoint
 		console.log('Fetching jobs from:', url)
 		const response = await axios.get(url)
 		console.log('Jobs response:', response.data)
 		jobs.value = response.data.jobs || []
+		
+		// Get current user from first call to /api/jobs (user-specific)
+		if (!currentUserId.value && response.data.jobs && response.data.jobs.length > 0) {
+			const userUrl = generateUrl('/apps/video_converter_fm') + '/api/jobs'
+			const userResponse = await axios.get(userUrl)
+			if (userResponse.data.jobs && userResponse.data.jobs.length > 0) {
+				currentUserId.value = userResponse.data.jobs[0].user_id
+			}
+		}
+		
 		loading.value = false
 	} catch (error) {
 		console.error('Failed to fetch jobs:', error)
 		loading.value = false
 	}
+}
+
+// Toggle show all jobs
+const onToggleShowAll = (value) => {
+	showAllJobs.value = value
+	localStorage.setItem('video_converter_fm_show_all_jobs', value.toString())
+	fetchJobs()
 }
 
 // Format helpers
@@ -186,6 +227,26 @@ const getStatusLabel = (status) => {
 		failed: t('video_converter_fm', 'Échoué'),
 	}
 	return labels[status] || status
+}
+
+// Check if current user can delete a job
+const canDeleteJob = (job) => {
+	// User can only delete their own jobs
+	return job.user_id === currentUserId.value
+}
+
+// Delete a job
+const onDelete = async (job) => {
+	try {
+		if (!confirm(t('video_converter_fm', 'Supprimer ce job ?'))) return
+		const url = generateUrl('/apps/video_converter_fm') + `/api/jobs/${job.id}`
+		await axios.delete(url)
+		// Remove from local state immediately
+		jobs.value = jobs.value.filter(j => j.id !== job.id)
+	} catch (e) {
+		console.error('Failed to delete job', e)
+		alert(t('video_converter_fm', 'Échec de la suppression du job'))
+	}
 }
 
 // Lifecycle
@@ -289,6 +350,13 @@ onUnmounted(() => {
 	color: var(--color-text-maxcontrast);
 }
 
+.job-creator {
+	font-size: 12px;
+	color: var(--color-text-maxcontrast);
+	margin-top: 4px;
+	font-style: italic;
+}
+
 .job-duration {
 	margin-left: 4px;
 }
@@ -357,5 +425,51 @@ onUnmounted(() => {
 	color: var(--color-error);
 	text-align: right;
 	margin-top: 4px;
+}
+
+.job-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 8px;
+}
+
+.job-owner-badge {
+	font-size: 11px;
+	padding: 2px 8px;
+	background: var(--color-background-dark);
+	border-radius: var(--border-radius-pill);
+	color: var(--color-text-maxcontrast);
+	font-weight: 500;
+}
+
+.settings-section {
+	padding: 24px;
+}
+
+.settings-section h2 {
+	font-size: 18px;
+	font-weight: 600;
+	margin-bottom: 24px;
+}
+
+.setting-item {
+	margin-bottom: 24px;
+	padding: 16px;
+	background: var(--color-background-hover);
+	border-radius: var(--border-radius-large);
+}
+
+.setting-description {
+	font-size: 13px;
+	color: var(--color-text-maxcontrast);
+	margin-top: 8px;
+	margin-bottom: 0;
+}
+
+.no-admin-notice {
+	font-size: 14px;
+	color: var(--color-text-maxcontrast);
+	font-style: italic;
 }
 </style>

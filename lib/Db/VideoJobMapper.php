@@ -50,6 +50,18 @@ class VideoJobMapper extends QBMapper {
     }
 
     /**
+     * Récupère tous les jobs (sans filtre utilisateur)
+     */
+    public function findAll(): array {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('*')
+           ->from($this->getTableName())
+           ->orderBy('created_at', 'DESC');
+        
+        return $this->findEntities($qb);
+    }
+
+    /**
      * Récupère les jobs en cours (processing)
      */
     public function findProcessingJobs(): array {
@@ -107,5 +119,15 @@ class VideoJobMapper extends QBMapper {
            ->andWhere($qb->expr()->lt('finished_at', $qb->createNamedParameter($cutoffDate)));
         
         return $qb->execute();
+    }
+
+    /**
+     * Supprime un job par son ID
+     */
+    public function deleteById(int $id): void {
+        $qb = $this->db->getQueryBuilder();
+        $qb->delete($this->getTableName())
+           ->where($qb->expr()->eq('id', $qb->createNamedParameter($id)))
+           ->execute();
     }
 }

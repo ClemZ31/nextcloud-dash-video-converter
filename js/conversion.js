@@ -9,7 +9,7 @@
     'use strict'
 
     const STORAGE_KEY = 'video_converter_fm::modal_defaults'
-    const DEFAULT_DURATION_SECONDS = 900
+    const DEFAULT_DURATION_SECONDS = 60 // Fallback conservative: 1 minute (ajustable selon durée réelle)
     const DEFAULT_SETTINGS = {
         formats: {
             dash: true,
@@ -55,6 +55,8 @@
     let currentOverlay = null
     let currentFile = null
     let currentContext = null
+    let currentVideoDuration = null // Real video duration from probe (null = use fallback)
+    let currentVideoMetadata = null // Full metadata from probe
     let activeTab = 'simple'
     let isSubmitting = false
     let escKeyListener = null
@@ -167,7 +169,20 @@
         }
     }
 
-    function calculateEstimates(settings, durationSeconds = DEFAULT_DURATION_SECONDS) {
+    // Improved estimation model factoring codec, preset & resolution cost + packaging overhead
+    function calculateEstimates(settings, durationSeconds = null, opts = {}) {
+        // Use real video duration if available, otherwise fallback to DEFAULT_DURATION_SECONDS
+        if (durationSeconds === null) {
+            durationSeconds = currentVideoDuration || DEFAULT_DURATION_SECONDS
+        }
+        
+        const {
+            reuseEncodingBetweenFormats = true, // if true, DASH + HLS share same encode, packaging adds a small overhead
+            overheadPercent = 0.06,             // container + manifest + segmentation overhead
+            avgBitrateEfficiency = 0.85,        // target bitrate vs. real average
+            packagingOverheadPerExtraFormat = 0.08, // cost of additional format if reuseEncodingBetweenFormats
+        } = opts
+
         const enabledRenditions = RENDITION_PRESETS
             .map((preset) => {
                 const entry = settings.renditions?.[preset.id] || {}
@@ -175,43 +190,78 @@
                 return {
                     id: preset.id,
                     label: preset.label,
+                    resolution: preset.resolution,
                     videoBitrate: Number(entry.videoBitrate ?? preset.defaultVideo) || 0,
                     audioBitrate: Number(entry.audioBitrate ?? preset.defaultAudio) || 0,
                     enabled,
                 }
             })
-            .filter((rendition) => rendition.enabled)
+            .filter(r => r.enabled)
 
-        const totalBitrate = enabledRenditions.reduce((acc, rendition) => {
-            return acc + rendition.videoBitrate + rendition.audioBitrate
-        }, 0)
-
+        // Active formats
         const activeFormats = []
-        if (settings.formats?.dash) {
-            activeFormats.push('dash')
-        }
-        if (settings.formats?.hls) {
-            activeFormats.push('hls')
-        }
-
+        if (settings.formats?.dash) activeFormats.push('dash')
+        if (settings.formats?.hls) activeFormats.push('hls')
         const formatCount = activeFormats.length
-        let estimatedSpace = 0
-        if (totalBitrate > 0 && formatCount > 0) {
-            estimatedSpace = (totalBitrate * durationSeconds) / 8 / 1024 / 1024
-            estimatedSpace *= formatCount
-        }
 
-        const timePerFormat = 45
-        const timeEstimateMin = timePerFormat * formatCount
-        const timeEstimateMax = timeEstimateMin + (formatCount > 0 ? 30 : 0)
+        // --- Estimated output size (GB) ---
+        const totalBitrateKbps = enabledRenditions.reduce((sum, r) => sum + r.videoBitrate + r.audioBitrate, 0)
+        let estimatedSpaceGB = 0
+        if (totalBitrateKbps > 0 && formatCount > 0) {
+            estimatedSpaceGB = ((totalBitrateKbps * avgBitrateEfficiency * durationSeconds) / 8 / 1024 / 1024) * formatCount
+            estimatedSpaceGB *= (1 + overheadPercent)
+        }
+        estimatedSpaceGB = Number(estimatedSpaceGB.toFixed(2))
+
+        // --- Time estimation ---
+        // Facteurs calibrés pour un ratio temps_encodage / durée_source
+        // (temps réel observé: ~1x pour x264 slow, ~1.6x pour x265, ~2x pour VP9)
+        const codecMult = { libx264: 1.0, libx265: 1.5, 'libvpx-vp9': 1.8 }[settings.videoCodec] ?? 1.2
+        const presetMult = {
+            ultrafast: 0.15,
+            superfast: 0.25,
+            veryfast: 0.35,
+            fast: 0.5,
+            medium: 0.7,
+            slow: 1.0,
+            slower: 1.3,
+            veryslow: 1.6,
+        }[settings.preset] ?? 1.0
+        const resolutionMult = {
+            '1920x1080': 1.0,
+            '1280x720': 0.6,
+            '854x480': 0.4,
+            '640x360': 0.3,
+            '426x240': 0.2,
+            '256x144': 0.1,
+        }
+        const perRenditionFactors = enabledRenditions.map(r => {
+            const resMult = resolutionMult[r.resolution] ?? 1.0
+            return codecMult * presetMult * resMult
+        })
+        let encodeFactorSum = perRenditionFactors.reduce((a, b) => a + b, 0)
+
+        let estimatedSeconds
+        if (reuseEncodingBetweenFormats && formatCount > 1) {
+            const baseEncode = durationSeconds * encodeFactorSum
+            const packaging = baseEncode * packagingOverheadPerExtraFormat * (formatCount - 1)
+            estimatedSeconds = baseEncode + packaging
+        } else {
+            estimatedSeconds = durationSeconds * encodeFactorSum * formatCount
+        }
+        const timeEstimateMin = Math.max(1, Math.round((estimatedSeconds / 60) * 0.85))
+        const timeEstimateMax = Math.max(timeEstimateMin, Math.round((estimatedSeconds / 60) * 1.15))
 
         return {
             enabledRenditions,
             activeFormats,
             formatCount,
-            estimatedSpace: Number(estimatedSpace.toFixed(1)),
+            estimatedSpaceGB,
             timeEstimateMin,
             timeEstimateMax,
+            codecMult,
+            presetMult,
+            perRenditionFactors,
         }
     }
 
@@ -231,12 +281,40 @@
         summary.push({ label: tnc('video_converter_fm', 'Output formats'), value: formatsText })
         summary.push({ label: tnc('video_converter_fm', 'Video codec'), value: settings.videoCodec })
         summary.push({ label: tnc('video_converter_fm', 'Audio codec'), value: settings.audioCodec })
-    summary.push({ label: tnc('video_converter_fm', 'FFmpeg preset'), value: settings.preset })
+        summary.push({ label: tnc('video_converter_fm', 'FFmpeg preset'), value: settings.preset })
         summary.push({ label: tnc('video_converter_fm', 'Subtitles'), value: settings.subtitles ? tnc('video_converter_fm', 'SRT to WebVTT') : tnc('video_converter_fm', 'Disabled') })
+        // Extra quick stats
+        // summary.push({ label: tnc('video_converter_fm', 'Est. size (GB)'), value: estimates.estimatedSpaceGB })
+        // summary.push({ label: tnc('video_converter_fm', 'Est. time (min)'), value: `${estimates.timeEstimateMin}-${estimates.timeEstimateMax}` })
         return { summary, estimates }
     }
 
     function buildDialogHtml(filename, settings) {
+        // Build video info line from metadata if available
+        let videoInfoHtml = ''
+        if (currentVideoMetadata) {
+            const parts = []
+            if (currentVideoMetadata.durationFormatted) {
+                parts.push(`⏱️ ${currentVideoMetadata.durationFormatted}`)
+            }
+            if (currentVideoMetadata.width && currentVideoMetadata.height) {
+                parts.push(`📐 ${currentVideoMetadata.width}×${currentVideoMetadata.height}`)
+            }
+            if (currentVideoMetadata.codec) {
+                parts.push(`🎥 ${currentVideoMetadata.codec}`)
+            }
+            if (currentVideoMetadata.bitrate) {
+                parts.push(`📊 ${currentVideoMetadata.bitrate} Kbps`)
+            }
+            if (currentVideoMetadata.fps) {
+                parts.push(`🎬 ${currentVideoMetadata.fps} fps`)
+            }
+            
+            if (parts.length > 0) {
+                videoInfoHtml = `<li style="font-size: 12px; color: var(--color-text-lighter);">${parts.join(' • ')}</li>`
+            }
+        }
+
         const renditionMarkup = RENDITION_PRESETS.map((preset) => `
             <div class="vc-rendition-item" data-rendition="${preset.id}">
                 <div class="vc-rendition-header">
@@ -264,59 +342,59 @@
             <div class="vc-modal" id="vc-modal">
                 <div class="vc-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="vc-modal-title">
                     <div class="vc-modal__header">
-                        <h2 class="vc-modal__title" id="vc-modal-title">${tnc('video_converter_fm', 'Conversion DASH + HLS')}</h2>
+                        <h2 class="vc-modal__title" id="vc-modal-title">${tnc('video_converter_fm', 'Conversion DASH et HLS')}</h2>
                         <button type="button" class="vc-close-btn" data-vc-action="close" aria-label="${tnc('video_converter_fm', 'Close')}">&times;</button>
                     </div>
                     <div class="vc-tabs">
                         <button type="button" class="vc-tab-btn vc-tab-btn--active" data-vc-tab="simple">${tnc('video_converter_fm', 'Simple')}</button>
-                        <button type="button" class="vc-tab-btn" data-vc-tab="advanced">${tnc('video_converter_fm', 'Advanced')}</button>
+                        <button type="button" class="vc-tab-btn" data-vc-tab="advanced">${tnc('video_converter_fm', 'Avancé')}</button>
                     </div>
                     <div class="vc-modal__body">
                         <div class="vc-tabpanel vc-tabpanel--active" data-vc-panel="simple">
                             <div class="vc-section">
-                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'File')}</h3>
+                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Fichier')}</h3>
                                 <ul class="vc-summary-list">
                                     <li><strong>${filename}</strong></li>
+                                    ${videoInfoHtml}
                                 </ul>
                             </div>
                             <div class="vc-section">
-                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Default profile')}</h3>
+                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Profil par défaut')}</h3>
                                 <ul class="vc-summary-list" id="vc-simple-summary"></ul>
                             </div>
                             <div class="vc-estimation-box" id="vc-simple-estimation"></div>
                             <div class="vc-button-row">
                                 <button type="button" class="vc-button vc-button--primary" data-vc-action="start-simple" data-vc-disable-while-submitting>
-                                    ${tnc('video_converter_fm', 'Start default conversion')}
+                                    ${tnc('video_converter_fm', 'Démarrer la conversion')}
                                 </button>
                                 <button type="button" class="vc-button" data-vc-tab="advanced">
-                                    ${tnc('video_converter_fm', 'Customize...')}
+                                    ${tnc('video_converter_fm', 'Personnaliser...')}
                                 </button>
                             </div>
                         </div>
                         <div class="vc-tabpanel" data-vc-panel="advanced">
                             <div class="vc-section">
-                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Output formats')}</h3>
+                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Formats de sortie')}</h3>
                                 <div class="vc-format-toggle">
                                     <label><input type="checkbox" id="vc-format-dash" /> DASH (MPD)</label>
                                     <label><input type="checkbox" id="vc-format-hls" /> HLS (M3U8)</label>
                                 </div>
                                 <div class="vc-warning vc-warning--error" id="vc-format-warning" hidden>
-                                    ${tnc('video_converter_fm', 'Select at least one output format.')}
+                                    ${tnc('video_converter_fm', 'Sélectionnez au moins un format de sortie.')}
                                 </div>
                             </div>
                             <div class="vc-section">
                                 <h3 class="vc-section__title">${tnc('video_converter_fm', 'Renditions')}</h3>
                                 <div class="vc-button-row">
-                                    <button type="button" class="vc-button" data-vc-action="load-defaults">${tnc('video_converter_fm', 'Load defaults')}</button>
-                                    <button type="button" class="vc-button" data-vc-action="save-defaults">${tnc('video_converter_fm', 'Save as default')}</button>
+                                    <button type="button" class="vc-button" data-vc-action="load-defaults">${tnc('video_converter_fm', 'Charger les valeurs par défaut')}</button>
                                 </div>
                                 <div class="vc-rendition-list">${renditionMarkup}</div>
                             </div>
                             <div class="vc-section">
-                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'FFmpeg settings')}</h3>
+                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Paramètres FFmpeg')}</h3>
                                 <div class="vc-form-grid">
                                     <div class="vc-form-field">
-                                        <label for="vc-video-codec">${tnc('video_converter_fm', 'Video codec')}</label>
+                                        <label for="vc-video-codec">${tnc('video_converter_fm', 'Codec vidéo')}</label>
                                         <select id="vc-video-codec">
                                             <option value="libx264">H.264 (libx264)</option>
                                             <option value="libx265">H.265 (libx265)</option>
@@ -324,7 +402,7 @@
                                         </select>
                                     </div>
                                     <div class="vc-form-field">
-                                        <label for="vc-audio-codec">${tnc('video_converter_fm', 'Audio codec')}</label>
+                                        <label for="vc-audio-codec">${tnc('video_converter_fm', 'Codec audio')}</label>
                                         <select id="vc-audio-codec">
                                             <option value="aac">AAC</option>
                                             <option value="opus">Opus</option>
@@ -332,7 +410,7 @@
                                         </select>
                                     </div>
                                     <div class="vc-form-field">
-                                        <label for="vc-preset">${tnc('video_converter_fm', 'FFmpeg preset')}</label>
+                                        <label for="vc-preset">${tnc('video_converter_fm', 'Préréglage FFmpeg')}</label>
                                         <select id="vc-preset">
                                             <option value="ultrafast">ultrafast</option>
                                             <option value="superfast">superfast</option>
@@ -346,7 +424,7 @@
                                     </div>
                                     <div class="vc-form-field">
                                         <label>
-                                            <input type="checkbox" id="vc-subtitles" /> ${tnc('video_converter_fm', 'Convert subtitles (SRT to WebVTT)')}
+                                            <input type="checkbox" id="vc-subtitles" /> ${tnc('video_converter_fm', 'Convertir les sous-titres (SRT en WebVTT)')}
                                         </label>
                                     </div>
                                 </div>
@@ -354,13 +432,13 @@
                             <div class="vc-estimation-box vc-estimation-box--warning" id="vc-advanced-estimation"></div>
                             <div class="vc-button-row">
                                 <button type="button" class="vc-button vc-button--primary" data-vc-action="start-advanced" data-vc-disable-while-submitting>
-                                    ${tnc('video_converter_fm', 'Start custom conversion')}
+                                    ${tnc('video_converter_fm', 'Démarrer la conversion personnalisée')}
                                 </button>
                             </div>
                         </div>
                     </div>
                     <div class="vc-modal__footer">
-                        <button type="button" class="vc-button" data-vc-action="cancel" data-vc-disable-while-submitting>${tnc('video_converter_fm', 'Cancel')}</button>
+                        <button type="button" class="vc-button" data-vc-action="cancel" data-vc-disable-while-submitting>${tnc('video_converter_fm', 'Annuler')}</button>
                     </div>
                 </div>
             </div>
@@ -376,11 +454,15 @@
         const estimationBox = dialog.querySelector('#vc-simple-estimation')
         if (estimationBox) {
             if (estimates.formatCount === 0 || estimates.enabledRenditions.length === 0) {
-                estimationBox.textContent = tnc('video_converter_fm', 'Select at least one format and rendition in the Advanced tab.')
+                estimationBox.textContent = tnc('video_converter_fm', 'Sélectionnez au moins un format et une déclinaison dans l\'onglet Avancé.')
             } else {
+                // Show note only if using fallback duration (no real metadata)
+                const durationNote = currentVideoDuration 
+                    ? '' // Real duration detected, no note needed
+                    : `<em style="font-size: 11px; color: var(--color-text-lighter);">(estimation basée sur ~${Math.round(DEFAULT_DURATION_SECONDS/60)} min par défaut)</em>`
                 estimationBox.innerHTML = `
-                    ${tnc('video_converter_fm', 'Estimated space required: ~{n} GB', { n: estimates.estimatedSpace })}<br />
-                    ${tnc('video_converter_fm', 'Estimated time: ~{min}-{max} minutes', { min: estimates.timeEstimateMin, max: estimates.timeEstimateMax })}
+                    <strong>${tnc('video_converter_fm', 'Espace estimé requis')} :</strong> ~${estimates.estimatedSpaceGB} Go<br />
+                    <strong>${tnc('video_converter_fm', 'Temps estimé')} :</strong> ~${estimates.timeEstimateMin}-${estimates.timeEstimateMax} minutes ${durationNote}
                 `
             }
         }
@@ -480,9 +562,9 @@
             return
         }
         estimationBox.innerHTML = `
-            ${tnc('video_converter_fm', 'Estimated space: ~{n} GB', { n: estimates.estimatedSpace })}<br />
-            ${tnc('video_converter_fm', 'Estimated time: ~{min}-{max} minutes', { min: estimates.timeEstimateMin, max: estimates.timeEstimateMax })}<br />
-            ${tnc('video_converter_fm', 'Renditions actives: {n}', { n: estimates.enabledRenditions.length })}
+            <strong>${tnc('video_converter_fm', 'Espace estimé')} :</strong> ~${estimates.estimatedSpaceGB} Go<br />
+            <strong>${tnc('video_converter_fm', 'Temps estimé')} :</strong> ~${estimates.timeEstimateMin}-${estimates.timeEstimateMax} minutes<br />
+            <strong>${tnc('video_converter_fm', 'Renditions actives')} :</strong> ${estimates.enabledRenditions.length}
         `
     }
 
@@ -657,7 +739,7 @@
 
         const failures = results.filter((result) => result.status === 'rejected')
         if (failures.length === 0) {
-            notify(tnc('video_converter_fm', 'Conversion started: {formats}', { formats: formats.join(' + ').toUpperCase() }))
+            notify(tnc('video_converter_fm', 'Conversion started: ~{formats}', { formats: formats.join(' + ').toUpperCase() }))
             closeDialog()
         } else {
             notify(tnc('video_converter_fm', 'Some conversions could not be started.'), 'error')
@@ -706,14 +788,6 @@
                 notify(tnc('video_converter_fm', 'Default settings loaded.'))
                 break
             }
-            case 'save-defaults': {
-                const updated = collectAdvancedSettings(dialog)
-                renderSimpleSummary(dialog, updated)
-                updateAdvancedEstimation(dialog, updated)
-                saveDefaults(updated)
-                notify(tnc('video_converter_fm', 'New settings saved as defaults.'))
-                break
-            }
             }
         })
 
@@ -753,13 +827,51 @@
         return context
     }
 
-    function showConversionDialog(filename, context) {
+    async function showConversionDialog(filename, context) {
         ensureStyles()
         closeDialog()
 
-    const defaults = loadDefaults()
-    workingSettings = deepClone(defaults)
-    const markup = buildDialogHtml(filename, defaults)
+        const defaults = loadDefaults()
+        workingSettings = deepClone(defaults)
+        
+        // === PROBE VIDEO TO GET REAL METADATA ===
+        currentVideoDuration = null
+        currentVideoMetadata = null
+        
+        try {
+            const probeUrl = window?.OC?.generateUrl 
+                ? window.OC.generateUrl('/apps/video_converter_fm/api/video/probe')
+                : '/apps/video_converter_fm/api/video/probe'
+            
+            const videoPath = `${context.dir}/${filename}`
+            console.log(`[video_converter_fm] Probing video: ${videoPath}`)
+            
+            const response = await fetch(probeUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'requesttoken': window?.OC?.requestToken || ''
+                },
+                body: JSON.stringify({ path: videoPath })
+            })
+            
+            if (response.ok) {
+                currentVideoMetadata = await response.json()
+                if (currentVideoMetadata.duration > 0) {
+                    currentVideoDuration = Math.ceil(currentVideoMetadata.duration)
+                    console.log(`[video_converter_fm] Detected video duration: ${currentVideoDuration}s (${currentVideoMetadata.durationFormatted})`)
+                } else {
+                    console.warn('[video_converter_fm] Probe returned zero duration, using fallback')
+                }
+            } else {
+                console.warn('[video_converter_fm] Probe failed with status:', response.status)
+            }
+        } catch (error) {
+            console.warn('[video_converter_fm] Failed to probe video, using fallback duration:', error)
+        }
+        // === END PROBE ===
+        
+        const markup = buildDialogHtml(filename, defaults)
         document.body.insertAdjacentHTML('beforeend', markup)
 
         currentDialog = document.getElementById('vc-modal')
@@ -768,8 +880,8 @@
         currentFile = filename
         currentContext = context
 
-    renderSimpleSummary(currentDialog, workingSettings)
-    populateAdvancedForm(currentDialog, workingSettings)
+        renderSimpleSummary(currentDialog, workingSettings)
+        populateAdvancedForm(currentDialog, workingSettings)
         bindDialogEvents(currentDialog)
 
         escKeyListener = (event) => {
@@ -800,9 +912,11 @@
             currentOverlay.remove()
             currentOverlay = null
         }
-            workingSettings = null
-            currentFile = null
+        workingSettings = null
+        currentFile = null
         currentContext = null
+        currentVideoDuration = null
+        currentVideoMetadata = null
         isSubmitting = false
     }
 

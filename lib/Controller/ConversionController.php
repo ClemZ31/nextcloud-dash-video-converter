@@ -11,6 +11,7 @@ use OCP\EventDispatcher\IEventDispatcher;
 use OC\Files\Filesystem;
 use OCA\Video_Converter_Fm\Service\ConversionService;
 use OCA\Video_Converter_Fm\Db\VideoJobMapper;
+use OCP\IGroupManager;
 
 
 /**
@@ -25,6 +26,7 @@ class ConversionController extends Controller
 	/** @var IRequest */
 	protected $request;
     private $logger;
+	private $groupManager;
 
 	/**
 	 * @NoAdminRequired
@@ -35,7 +37,8 @@ class ConversionController extends Controller
 		$userId,
 		ConversionService $conversionService,
 		VideoJobMapper $jobMapper,
-        \Psr\Log\LoggerInterface $logger
+        \Psr\Log\LoggerInterface $logger,
+		IGroupManager $groupManager
 	) {
 		parent::__construct($AppName, $request);
 		$this->request = $request;
@@ -43,6 +46,7 @@ class ConversionController extends Controller
 		$this->conversionService = $conversionService;
 		$this->jobMapper = $jobMapper;
         $this->logger = $logger;
+		$this->groupManager = $groupManager;
 	}
 
 	public function getFile($directory, $fileName)
@@ -51,6 +55,14 @@ class ConversionController extends Controller
 		\OC_Util::setupFS($this->userId);
 		return Filesystem::getLocalFile($directory . '/' . $fileName);
 	}
+
+	/**
+	 * Vérifie si l'utilisateur actuel est admin
+	 */
+	private function isAdmin(): bool {
+		return $this->groupManager->isAdmin($this->userId);
+	}
+
 	/**
 	 * @NoAdminRequired
 	 */
@@ -234,6 +246,7 @@ class ConversionController extends Controller
 				return [
 					'id' => $job->getId(),
 					'file_id' => $job->getFileId(),
+					'user_id' => $job->getUserId(),
 					'input_path' => $job->getInputPath(),
 					'output_formats' => $job->getOutputFormats(),
 					'status' => $job->getStatus(),
@@ -241,6 +254,40 @@ class ConversionController extends Controller
 					'created_at' => $job->getCreatedAt(),
 					'started_at' => $job->getStartedAt(),
 					'completed_at' => $job->getFinishedAt(), // Alias pour Vue.js
+					'finished_at' => $job->getFinishedAt(),
+					'error_message' => $job->getErrorMessage(),
+				];
+			}, $jobs);
+
+			return new DataResponse(['jobs' => $result]);
+		} catch (\Exception $e) {
+			return new DataResponse(['error' => $e->getMessage()], 500);
+		}
+	}
+
+	/**
+	 * Liste TOUS les jobs (tous les utilisateurs)
+	 * 
+	 * @NoAdminRequired
+	 * @NoCSRFRequired
+	 * @return DataResponse
+	 */
+	public function listAllJobs(): DataResponse {
+		try {
+			$jobs = $this->jobMapper->findAll();
+			
+			$result = array_map(function($job) {
+				return [
+					'id' => $job->getId(),
+					'file_id' => $job->getFileId(),
+					'user_id' => $job->getUserId(),
+					'input_path' => $job->getInputPath(),
+					'output_formats' => $job->getOutputFormats(),
+					'status' => $job->getStatus(),
+					'progress' => $job->getProgress(),
+					'created_at' => $job->getCreatedAt(),
+					'started_at' => $job->getStartedAt(),
+					'completed_at' => $job->getFinishedAt(),
 					'finished_at' => $job->getFinishedAt(),
 					'error_message' => $job->getErrorMessage(),
 				];
@@ -432,5 +479,115 @@ class ConversionController extends Controller
 			$cmd = "nice -n " . escapeshellarg($priority) . $cmd;
 		}
 		return $cmd;
+	}
+
+	/**
+	 * Supprime un job par son ID
+	 *
+	 * @NoAdminRequired
+	 * @NoCSRFRequired
+	 */
+	public function deleteJob(int $jobId): DataResponse {
+		try {
+			$job = $this->jobMapper->findById($jobId);
+
+			// Vérifier que l'utilisateur a le droit de supprimer ce job
+			if ($job->getUserId() !== $this->userId) {
+				return new DataResponse(['error' => 'Unauthorized'], 403);
+			}
+
+			// L'utilisateur peut supprimer son job même en cours de traitement
+			$this->jobMapper->deleteById($jobId);
+			$this->logger->info("Job #{$jobId} deleted by user {$this->userId}", ['app' => 'video_converter_fm']);
+			return new DataResponse(['success' => true]);
+		} catch (\Throwable $e) {
+			return new DataResponse(['error' => $e->getMessage()], 404);
+		}
+	}
+
+	/**
+	 * Probe video file to extract metadata using ffprobe
+	 * 
+	 * @NoAdminRequired
+	 * @NoCSRFRequired
+	 */
+	public function probeVideo(): DataResponse {
+		try {
+			$path = $this->request->getParam('path');
+			if (!$path) {
+				return new DataResponse(['error' => 'Missing path parameter'], 400);
+			}
+
+			// Setup filesystem for current user
+			\OC_Util::tearDownFS();
+			\OC_Util::setupFS($this->userId);
+
+			// Get local file path
+			$localPath = Filesystem::getLocalFile($path);
+			if (!$localPath || !file_exists($localPath)) {
+				return new DataResponse(['error' => 'File not found'], 404);
+			}
+
+			// Execute ffprobe to extract metadata
+			$command = sprintf(
+				'ffprobe -v quiet -print_format json -show_format -show_streams %s 2>&1',
+				escapeshellarg($localPath)
+			);
+
+			exec($command, $output, $returnCode);
+
+			if ($returnCode !== 0) {
+				$this->logger->warning("ffprobe failed for file: {$path}", ['app' => 'video_converter_fm']);
+				return new DataResponse(['error' => 'Failed to probe video file'], 500);
+			}
+
+			$metadata = json_decode(implode('', $output), true);
+			if (!$metadata) {
+				return new DataResponse(['error' => 'Invalid ffprobe output'], 500);
+			}
+
+			// Extract important information
+			$duration = (float)($metadata['format']['duration'] ?? 0);
+			$size = (int)($metadata['format']['size'] ?? 0);
+			$bitrate = (int)($metadata['format']['bit_rate'] ?? 0);
+
+			// Find video stream
+			$videoStream = null;
+			foreach ($metadata['streams'] ?? [] as $stream) {
+				if ($stream['codec_type'] === 'video') {
+					$videoStream = $stream;
+					break;
+				}
+			}
+
+			$result = [
+				'duration' => round($duration, 2), // seconds
+				'durationFormatted' => gmdate('H:i:s', (int)$duration),
+				'size' => $size,
+				'bitrate' => round($bitrate / 1000, 0), // Kbps
+			];
+
+			if ($videoStream) {
+				$result['width'] = $videoStream['width'] ?? null;
+				$result['height'] = $videoStream['height'] ?? null;
+				$result['codec'] = $videoStream['codec_name'] ?? null;
+				$result['fps'] = null;
+				
+				// Calculate FPS if available
+				if (isset($videoStream['r_frame_rate'])) {
+					$parts = explode('/', $videoStream['r_frame_rate']);
+					if (count($parts) === 2 && $parts[1] > 0) {
+						$result['fps'] = round($parts[0] / $parts[1], 2);
+					}
+				}
+			}
+
+			$this->logger->debug("Probed video: {$path}, duration: {$duration}s", ['app' => 'video_converter_fm']);
+			return new DataResponse($result);
+
+		} catch (\Exception $e) {
+			$this->logger->error('Error probing video: ' . $e->getMessage(), ['app' => 'video_converter_fm']);
+			return new DataResponse(['error' => $e->getMessage()], 500);
+		}
 	}
 }
