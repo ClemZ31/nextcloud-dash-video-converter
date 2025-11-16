@@ -1,0 +1,21 @@
+[Unit]
+Description=Nextcloud Video Converter Worker
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/nextcloud/apps/video_converter_fm
+ExecStart=/usr/bin/php /var/www/nextcloud/apps/video_converter_fm/bin/worker.php
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/nextcloud/video-worker.log
+StandardError=append:/var/log/nextcloud/video-worker-error.log
+
+# Limits (optionnel)
+LimitNOFILE=65536
+MemoryLimit=2G
+
+[Install]
+WantedBy=multi-user.target

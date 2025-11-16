@@ -1,0 +1,24 @@
+services:
+  nextcloud:
+    container_name: nextcloud-dev-transcoder
+    image: ghcr.io/juliusknorr/nextcloud-dev-php82:latest
+    ports:
+      - "17210:80"
+    environment:
+      NEXTCLOUD_VERSION: "32"
+    volumes:
+      # 1. Le chemin correspond maintenant à l'ID de votre info.xml
+      - .:/var/www/html/apps-extra/video_converter_fm
+
+      # 2. Volumes de données et de configuration
+      - nextcloud-config:/var/www/html/config
+      - nextcloud-data:/var/www/html/data
+      - nextcloud-appswr:/var/www/html/apps-writable
+      
+      # 3. Le volume 'nextcloud-html' est SUPPRIMÉ
+
+volumes:
+  nextcloud-config:
+  nextcloud-data:
+  nextcloud-appswr:
+  # 4. 'nextcloud-html' est aussi SUPPRIMÉ d'ici

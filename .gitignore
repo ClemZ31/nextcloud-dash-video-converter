@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build outputs are committed for deployment
+# Uncomment if you prefer to build on server:
+# js/conversions-app.js
+# js/conversions-app.css
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Fichiers générés avec le build output de Vite
+js/conversions-app.js
+css/style.css
+
+# ZIPs de déploiement temporaires
+video_converter_fm_*.zip
+
+# Scripts de déploiement locaux (contiennent des infos sensibles)
+deploy-clean.local.ps1
+*.local.ps1

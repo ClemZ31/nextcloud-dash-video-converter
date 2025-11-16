@@ -1,3 +1,18 @@
+## 1.0.6 - 2025-01-26
+Major Rewrite for Nextcloud 32 Compatibility
+Added
+
+- Complete migration to modern Nextcloud Files API
+- New Vue.js-based user interface with ConversionDialog component
+- Modern build system with Webpack and Babel
+- Automated installation script (install.sh)
+- Comprehensive documentation (INSTALLATION.md, updated README)
+- Test script for diagnostic (test.sh)
+- Support for Nextcloud 25 through 32
+- Improved error handling and user feedback
+- Modern, responsive dialog interface
+- ESLint configuration for
+
 ## 1.0.5
 
 - Support for NC 24

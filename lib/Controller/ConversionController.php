@@ -1,6 +1,6 @@
 <?php
 
-namespace OCA\Video_Converter\Controller;
+namespace OCA\Video_Converter_Fm\Controller;
 
 use OCP\IRequest;
 use OCP\AppFramework\Http\TemplateResponse;
@@ -9,20 +9,44 @@ use OCP\AppFramework\Controller;
 use \OCP\IConfig;
 use OCP\EventDispatcher\IEventDispatcher;
 use OC\Files\Filesystem;
+use OCA\Video_Converter_Fm\Service\ConversionService;
+use OCA\Video_Converter_Fm\Db\VideoJobMapper;
+use OCP\IGroupManager;
 
 
+/**
+ * Contrôleur pour la conversion de vidéos
+ */
 class ConversionController extends Controller
 {
 
 	private $userId;
+	private $conversionService;
+	private $jobMapper;
+	/** @var IRequest */
+	protected $request;
+    private $logger;
+	private $groupManager;
 
 	/**
 	 * @NoAdminRequired
 	 */
-	public function __construct($AppName, IRequest $request, $UserId)
-	{
+	public function __construct(
+		$AppName,
+		IRequest $request,
+		$userId,
+		ConversionService $conversionService,
+		VideoJobMapper $jobMapper,
+        \Psr\Log\LoggerInterface $logger,
+		IGroupManager $groupManager
+	) {
 		parent::__construct($AppName, $request);
-		$this->userId = $UserId;
+		$this->request = $request;
+		$this->userId = $userId;
+		$this->conversionService = $conversionService;
+		$this->jobMapper = $jobMapper;
+        $this->logger = $logger;
+		$this->groupManager = $groupManager;
 	}
 
 	public function getFile($directory, $fileName)
@@ -31,52 +55,269 @@ class ConversionController extends Controller
 		\OC_Util::setupFS($this->userId);
 		return Filesystem::getLocalFile($directory . '/' . $fileName);
 	}
+
+	/**
+	 * Vérifie si l'utilisateur actuel est admin
+	 */
+	private function isAdmin(): bool {
+		return $this->groupManager->isAdmin($this->userId);
+	}
+
 	/**
 	 * @NoAdminRequired
 	 */
+	/**
+	 * Convertit une vidéo en utilisant FFmpeg avec les paramètres spécifiés
+	 * 
+	 * @param string $nameOfFile Nom du fichier vidéo source
+	 * @param string $directory Répertoire du fichier source
+	 * @param bool $external Indique si le fichier est sur un stockage externe
+	 * @param string $type Format de sortie (mp4/avi/webm/mpd/m3u8)
+	 * @param string $preset Preset FFmpeg (fast/medium/slow)
+	 * @param string $priority Priorité nice (0/5/10)
+	 * @param bool $movflags Activer faststart pour MP4
+	 * @param string|null $codec Codec vidéo (x264/x265/copy/null=auto)
+	 * @param string|null $vbitrate Bitrate vidéo en kbps
+	 * @param string|null $scale Résolution cible
+	 * @param string|null $shareOwner Propriétaire du partage (si applicable)
+	 * @param int $mtime Timestamp de modification (optionnel)
+	 * @return string Réponse JSON avec le code et la description du résultat
+	 * 
+	 * @note Gère les fichiers sur stockage externe et la réindexation après conversion
+	 */
 	public function convertHere($nameOfFile, $directory, $external, $type, $preset, $priority, $movflags = false, $codec = null, $vbitrate = null, $scale = null, $shareOwner = null, $mtime = 0)
 	{
-		$file = $this->getFile($directory, $nameOfFile);
-		$dir = dirname($file);
-		$response = array();
-		if (file_exists($file)) {
-			$cmd = $this->createCmd($file, $preset, $type, $priority, $movflags, $codec, $vbitrate, $scale);			
-			exec($cmd, $output, $return);
-			// if the file is in external storage, and also check if encryption is enabled
-			if ($external || \OC::$server->getEncryptionManager()->isEnabled()) {
-				//put the temporary file in the external storage
-				Filesystem::file_put_contents($directory . '/' . pathinfo($nameOfFile)['filename'] . "." . $type, file_get_contents(dirname($file) . '/' . pathinfo($file)['filename'] . "." . $type));
-				// check that the temporary file is not the same as the new file
-				if (Filesystem::getLocalFile($directory . '/' . pathinfo($nameOfFile)['filename'] . "." . $type) != dirname($file) . '/' . pathinfo($file)['filename'] . "." . $type) {
-					unlink(dirname($file) . '/' . pathinfo($file)['filename'] . "." . $type);
+		try {
+			// Mode asynchrone : créer un job au lieu d'exécuter immédiatement
+			$inputPath = $directory . '/' . $nameOfFile;
+			
+			// Vérifier que le fichier existe dans le FS Nextcloud
+            // Vérifier que le fichier existe dans le FS Nextcloud
+            \OC_Util::tearDownFS();
+            \OC_Util::setupFS($this->userId);
+
+            // D'ABORD, OBTENIR LA "VUE" DU SYSTÈME DE FICHIERS POUR L'UTILISATEUR
+            $userView = \OC\Files\Filesystem::getView();
+
+            // ENSUITE, VÉRIFIER SI LE FICHIER EXISTE DANS CETTE VUE
+            if (!$userView || !$userView->file_exists($inputPath)) {
+                return json_encode([
+                    "code" => 0,
+                    "desc" => "File not found or not readable: " . $inputPath
+                ]);
+            }
+
+            // ENFIN, OBTENIR LE CHEMIN LOCAL DU FICHIER À PARTIR DE LA VUE
+            $localFile = $userView->getLocalFile($inputPath);
+
+            // Vérifier que le fichier physique existe sur le disque
+            if (!file_exists($localFile)) {
+                return json_encode([
+                    "code" => 0,
+                    "desc" => "File exists in Nextcloud but not found on local storage: " . $localFile
+                ]);
+            }
+
+			/** @var IRequest $req */
+			$req = $this->request;
+
+			// Créer le job de conversion
+			$conversionParams = [
+				'type' => $type,
+				'preset' => $preset,
+				'priority' => (string) $priority,
+				'movflags' => filter_var($movflags, FILTER_VALIDATE_BOOLEAN),
+				'codec' => $codec,
+				'vbitrate' => $vbitrate,
+				'scale' => $scale,
+				'external' => (int) $external,
+			];
+
+			$audioCodec = $req ? $req->getParam('audioCodec') : null;
+			if (is_string($audioCodec) && $audioCodec !== '') {
+				$conversionParams['audio_codec'] = $audioCodec;
+			}
+
+			$selectedFormats = $req ? $req->getParam('selectedFormats') : null;
+			if (is_string($selectedFormats)) {
+				$decoded = json_decode($selectedFormats, true);
+				$selectedFormats = json_last_error() === JSON_ERROR_NONE ? $decoded : $selectedFormats;
+			}
+			if (!empty($selectedFormats)) {
+				$conversionParams['selected_formats'] = $selectedFormats;
+			}
+
+			$renditions = $req ? $req->getParam('renditions') : null;
+			if (is_string($renditions)) {
+				$decoded = json_decode($renditions, true);
+				$renditions = json_last_error() === JSON_ERROR_NONE ? $decoded : $renditions;
+			}
+			if (!empty($renditions)) {
+				$conversionParams['renditions'] = $renditions;
+			}
+
+			$profile = $req ? $req->getParam('profile') : null;
+			if (is_string($profile)) {
+				$decodedProfile = json_decode($profile, true);
+				$profile = json_last_error() === JSON_ERROR_NONE ? $decodedProfile : $profile;
+			}
+			if (!empty($profile)) {
+				$conversionParams['profile'] = $profile;
+				if (is_array($profile)) {
+					$conversionParams['segment_duration'] = $profile['segmentDuration'] ?? null;
+					$conversionParams['keyframe_interval'] = $profile['keyframeInterval'] ?? null;
 				}
-			} else {
-				//create the new file in the NC filesystem
-				Filesystem::touch($directory . '/' . pathinfo($file)['filename'] . "." . $type);
 			}
-			//if ffmpeg is throwing an error
-			if ($return == 127) {
-				$response = array_merge($response, array("code" => 0, "desc" => "ffmpeg is not installed or available \n
-				DEBUG(" . $return . "): " . $file . ' - ' . $output));
-				return json_encode($response);
-			} else {
-				$response = array_merge($response, array("code" => 1, "desc" => "Convertion OK: " . $cmd));
 
-				// After file is converted, we need to re-scan files in directory				
-				exec("php /var/www/nextcloud/occ files:scan --all"); //prod
-				//exec("/Applications/MAMP/bin/php/php7.4.12/bin/php /Applications/MAMP/htdocs/nextcloud/occ files:scan --all"); //dev
+			$job = $this->conversionService->createJob(
+				$this->userId,
+				$nameOfFile, // Utiliser le nom de fichier comme fileId pour le moment
+				$inputPath,
+				$conversionParams
+			);
 
+            $this->logger->info(
+                "Conversion job #{$job->getId()} created for {$nameOfFile}",
+                ['app' => 'video_converter_fm']
+            );
 
-				return json_encode($response);
+			return json_encode([
+				"code" => 1,
+				"desc" => "Conversion job created successfully",
+				"job_id" => $job->getId(),
+				"status" => "pending"
+			]);
+
+		} catch (\Throwable $e) {
+            $this->logger->error(
+                'convertHere failed: ' . $e->getMessage(),
+                ['app' => 'video_converter_fm', 'exception' => $e]
+            );
+			return json_encode([
+				"code" => 0,
+				"desc" => "Server error: " . $e->getMessage()
+			]);
+		}
+	}
+
+	/**
+	 * Récupère le statut d'un job
+	 * 
+	 * @NoAdminRequired
+	 * @NoCSRFRequired
+	 * @param int $jobId
+	 * @return DataResponse
+	 */
+	public function getJobStatus(int $jobId): DataResponse {
+		try {
+			$job = $this->jobMapper->findById($jobId);
+			
+			// Vérifier que l'utilisateur a le droit de voir ce job
+			if ($job->getUserId() !== $this->userId) {
+				return new DataResponse(['error' => 'Unauthorized'], 403);
 			}
-		} else {
-			$response = array_merge($response, array("code" => 0, "desc" => "Can't find file at " . $file));
-			return json_encode($response);
+
+			return new DataResponse([
+				'id' => $job->getId(),
+				'status' => $job->getStatus(),
+				'progress' => $job->getProgress(),
+				'created_at' => $job->getCreatedAt(),
+				'started_at' => $job->getStartedAt(),
+				'finished_at' => $job->getFinishedAt(),
+				'error_message' => $job->getErrorMessage(),
+			]);
+		} catch (\Exception $e) {
+			return new DataResponse(['error' => $e->getMessage()], 404);
+		}
+	}
+
+	/**
+	 * Liste tous les jobs de l'utilisateur
+	 * 
+	 * @NoAdminRequired
+	 * @NoCSRFRequired
+	 * @return DataResponse
+	 */
+	public function listJobs(): DataResponse {
+		try {
+			$jobs = $this->jobMapper->findByUserId($this->userId);
+			
+			$result = array_map(function($job) {
+				return [
+					'id' => $job->getId(),
+					'file_id' => $job->getFileId(),
+					'user_id' => $job->getUserId(),
+					'input_path' => $job->getInputPath(),
+					'output_formats' => $job->getOutputFormats(),
+					'status' => $job->getStatus(),
+					'progress' => $job->getProgress(),
+					'created_at' => $job->getCreatedAt(),
+					'started_at' => $job->getStartedAt(),
+					'completed_at' => $job->getFinishedAt(), // Alias pour Vue.js
+					'finished_at' => $job->getFinishedAt(),
+					'error_message' => $job->getErrorMessage(),
+				];
+			}, $jobs);
+
+			return new DataResponse(['jobs' => $result]);
+		} catch (\Exception $e) {
+			return new DataResponse(['error' => $e->getMessage()], 500);
+		}
+	}
+
+	/**
+	 * Liste TOUS les jobs (tous les utilisateurs)
+	 * 
+	 * @NoAdminRequired
+	 * @NoCSRFRequired
+	 * @return DataResponse
+	 */
+	public function listAllJobs(): DataResponse {
+		try {
+			$jobs = $this->jobMapper->findAll();
+			
+			$result = array_map(function($job) {
+				return [
+					'id' => $job->getId(),
+					'file_id' => $job->getFileId(),
+					'user_id' => $job->getUserId(),
+					'input_path' => $job->getInputPath(),
+					'output_formats' => $job->getOutputFormats(),
+					'status' => $job->getStatus(),
+					'progress' => $job->getProgress(),
+					'created_at' => $job->getCreatedAt(),
+					'started_at' => $job->getStartedAt(),
+					'completed_at' => $job->getFinishedAt(),
+					'finished_at' => $job->getFinishedAt(),
+					'error_message' => $job->getErrorMessage(),
+				];
+			}, $jobs);
+
+			return new DataResponse(['jobs' => $result]);
+		} catch (\Exception $e) {
+			return new DataResponse(['error' => $e->getMessage()], 500);
 		}
 	}
 	/**
 	 * @NoAdminRequired
 	 */
+
+	/**
+ 	* Crée la commande FFmpeg pour la conversion
+ 	* 
+ 	* @param string $file Chemin complet du fichier source
+ 	* @param string $preset Preset FFmpeg (fast/medium/slow)
+ 	* @param string $output Format de sortie (mp4/avi/webm/mpd/m3u8)
+ 	* @param string $priority Nice priority (0/5/10)
+ 	* @param bool $movflags Activer faststart pour MP4
+ 	* @param string|null $codec Codec vidéo (x264/x265/copy/null=auto)
+ 	* @param string|null $vbitrate Bitrate vidéo en kbps
+ 	* @param string|null $scale Résolution cible
+ 	* @return string Commande shell complète
+ 	* 
+ 	* @note Cette méthode construit une commande shell complexe.
+ 	*       Pour DASH/HLS, elle génère une structure multi-résolution.
+ 	*/
 	public function createCmd($file, $preset, $output, $priority, $movflags, $codec, $vbitrate, $scale)
 	{
 		$middleArgs = "";
@@ -230,8 +471,7 @@ class ConversionController extends Controller
 			$cmd .= " && " . $subTitlesConversionCmd;
 			$cmd .= " && " . $refreshDirCmd;			
 			
-			//echo $cmd;
-			die($cmd);
+			//echo $cmd; // debug: print command if needed
 		} else
 			$cmd = $ffmepgPath . "ffmpeg -y -i " . escapeshellarg($file) . " " . $middleArgs . " " . escapeshellarg(dirname($file) . '/' . pathinfo($file)['filename'] . "." . $output);
 
@@ -239,5 +479,115 @@ class ConversionController extends Controller
 			$cmd = "nice -n " . escapeshellarg($priority) . $cmd;
 		}
 		return $cmd;
+	}
+
+	/**
+	 * Supprime un job par son ID
+	 *
+	 * @NoAdminRequired
+	 * @NoCSRFRequired
+	 */
+	public function deleteJob(int $jobId): DataResponse {
+		try {
+			$job = $this->jobMapper->findById($jobId);
+
+			// Vérifier que l'utilisateur a le droit de supprimer ce job
+			if ($job->getUserId() !== $this->userId) {
+				return new DataResponse(['error' => 'Unauthorized'], 403);
+			}
+
+			// L'utilisateur peut supprimer son job même en cours de traitement
+			$this->jobMapper->deleteById($jobId);
+			$this->logger->info("Job #{$jobId} deleted by user {$this->userId}", ['app' => 'video_converter_fm']);
+			return new DataResponse(['success' => true]);
+		} catch (\Throwable $e) {
+			return new DataResponse(['error' => $e->getMessage()], 404);
+		}
+	}
+
+	/**
+	 * Probe video file to extract metadata using ffprobe
+	 * 
+	 * @NoAdminRequired
+	 * @NoCSRFRequired
+	 */
+	public function probeVideo(): DataResponse {
+		try {
+			$path = $this->request->getParam('path');
+			if (!$path) {
+				return new DataResponse(['error' => 'Missing path parameter'], 400);
+			}
+
+			// Setup filesystem for current user
+			\OC_Util::tearDownFS();
+			\OC_Util::setupFS($this->userId);
+
+			// Get local file path
+			$localPath = Filesystem::getLocalFile($path);
+			if (!$localPath || !file_exists($localPath)) {
+				return new DataResponse(['error' => 'File not found'], 404);
+			}
+
+			// Execute ffprobe to extract metadata
+			$command = sprintf(
+				'ffprobe -v quiet -print_format json -show_format -show_streams %s 2>&1',
+				escapeshellarg($localPath)
+			);
+
+			exec($command, $output, $returnCode);
+
+			if ($returnCode !== 0) {
+				$this->logger->warning("ffprobe failed for file: {$path}", ['app' => 'video_converter_fm']);
+				return new DataResponse(['error' => 'Failed to probe video file'], 500);
+			}
+
+			$metadata = json_decode(implode('', $output), true);
+			if (!$metadata) {
+				return new DataResponse(['error' => 'Invalid ffprobe output'], 500);
+			}
+
+			// Extract important information
+			$duration = (float)($metadata['format']['duration'] ?? 0);
+			$size = (int)($metadata['format']['size'] ?? 0);
+			$bitrate = (int)($metadata['format']['bit_rate'] ?? 0);
+
+			// Find video stream
+			$videoStream = null;
+			foreach ($metadata['streams'] ?? [] as $stream) {
+				if ($stream['codec_type'] === 'video') {
+					$videoStream = $stream;
+					break;
+				}
+			}
+
+			$result = [
+				'duration' => round($duration, 2), // seconds
+				'durationFormatted' => gmdate('H:i:s', (int)$duration),
+				'size' => $size,
+				'bitrate' => round($bitrate / 1000, 0), // Kbps
+			];
+
+			if ($videoStream) {
+				$result['width'] = $videoStream['width'] ?? null;
+				$result['height'] = $videoStream['height'] ?? null;
+				$result['codec'] = $videoStream['codec_name'] ?? null;
+				$result['fps'] = null;
+				
+				// Calculate FPS if available
+				if (isset($videoStream['r_frame_rate'])) {
+					$parts = explode('/', $videoStream['r_frame_rate']);
+					if (count($parts) === 2 && $parts[1] > 0) {
+						$result['fps'] = round($parts[0] / $parts[1], 2);
+					}
+				}
+			}
+
+			$this->logger->debug("Probed video: {$path}, duration: {$duration}s", ['app' => 'video_converter_fm']);
+			return new DataResponse($result);
+
+		} catch (\Exception $e) {
+			$this->logger->error('Error probing video: ' . $e->getMessage(), ['app' => 'video_converter_fm']);
+			return new DataResponse(['error' => $e->getMessage()], 500);
+		}
 	}
 }
