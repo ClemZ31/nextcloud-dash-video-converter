@@ -23,21 +23,25 @@ class Application extends App implements IBootstrap {
     public function register(IRegistrationContext $context): void {
         // Register the ConversionController service so the router can instantiate it.
         // IRegistrationContext exposes registerService(...) rather than getContainer().
-        $appName = $this->getAppName(); // Capture app name outside the closure
-        
+        $appName = $this->appName ?? 'video_converter_fm';
+
         // Register ConversionController
         $context->registerService('ConversionController', function($c) use ($appName) {
-            // Resolve current user and a guaranteed IRequest instance from the global server
             $user = \OC::$server->getUserSession()->getUser();
             $userId = $user ? $user->getUID() : null;
-
-            // Always get the Request from the global server to avoid null injection/type errors
             $request = \OC::$server->getRequest();
-
+            $conversionService = $c->query('OCA\\Video_Converter_Fm\\Service\\ConversionService');
+            $jobMapper = $c->query('OCA\\Video_Converter_Fm\\Db\\VideoJobMapper');
+            $logger = \OC::$server->get(\OCP\ILogger::class);
+            $groupManager = \OC::$server->getGroupManager();
             return new \OCA\Video_Converter_Fm\Controller\ConversionController(
                 $appName,
                 $request,
-                $userId
+                $userId,
+                $conversionService,
+                $jobMapper,
+                $logger,
+                $groupManager
             );
         });
         
