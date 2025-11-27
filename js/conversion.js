@@ -653,8 +653,25 @@
         }
     }
 
-    function buildRequestData(filename, context, profile, format) {
-        const legacyType = format === 'dash' ? 'mpd' : format === 'hls' ? 'm3u8' : format
+    function buildRequestData(filename, context, profile) {
+        const selectedFormats = Array.isArray(profile.formats)
+            ? profile.formats
+            : Object.keys(profile.formats || {}).filter((key) => profile.formats[key])
+
+        let legacyType = 'mp4'
+        if (selectedFormats.length === 1) {
+            const single = selectedFormats[0]
+            if (single === 'dash') {
+                legacyType = 'mpd'
+            } else if (single === 'hls') {
+                legacyType = 'm3u8'
+            } else if (typeof single === 'string') {
+                legacyType = single
+            }
+        } else if (selectedFormats.length > 1) {
+            legacyType = 'adaptive'
+        }
+
         const codec = mapCodec(profile.videoCodec)
         const directory = context?.dir || '/'
         const external = context?.external ? 1 : 0
@@ -679,9 +696,9 @@
         return data
     }
 
-    function postConversion(filename, context, profile, format) {
+    function postConversion(filename, context, profile) {
         const ajaxUrl = buildAjaxUrl()
-        const data = buildRequestData(filename, context, profile, format)
+        const data = buildRequestData(filename, context, profile)
         return new Promise((resolve, reject) => {
             $.ajax({
                 type: 'POST',
@@ -733,17 +750,24 @@
         setSubmitting(dialog, true)
         setFileBusy(context, true)
 
-        const results = await Promise.allSettled(formats.map((format) => postConversion(filename, context, profile, format)))
-        setSubmitting(dialog, false)
-        setFileBusy(context, false)
-
-        const failures = results.filter((result) => result.status === 'rejected')
-        if (failures.length === 0) {
-            notify(tnc('video_converter_fm', 'Conversion started: ~{formats}', { formats: formats.join(' + ').toUpperCase() }))
+        try {
+            await postConversion(filename, context, profile)
+            let formatText = ''
+            if (formats.length === 2) {
+                formatText = 'DASH + HLS'
+            } else if (formats.length === 1) {
+                formatText = formats[0] === 'dash' ? 'DASH' : 'HLS'
+            } else {
+                formatText = 'inconnu'
+            }
+            notify(`Conversion de ${filename} en ${formatText}`)
             closeDialog()
-        } else {
-            notify(tnc('video_converter_fm', 'Some conversions could not be started.'), 'error')
-            console.error('[video_converter_fm] conversion errors', failures)
+        } catch (error) {
+            notify(tnc('video_converter_fm', 'Conversion could not be started.'), 'error')
+            console.error('[video_converter_fm] conversion error', error)
+        } finally {
+            setSubmitting(dialog, false)
+            setFileBusy(context, false)
         }
     }
 

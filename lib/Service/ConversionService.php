@@ -80,6 +80,25 @@ class ConversionService {
             $this->logger->info("Processing job {$job->getId()}: {$localFile}", ['app' => 'video_converter_fm']);
             echo "[video_converter_fm] execJob #{$job->getId()} file={$localFile}\n";
 
+            // Préparer le dossier de sortie horodaté
+            $pathInfo = pathinfo($localFile);
+            $baseName = $pathInfo['filename'] ?? pathinfo($localFile, PATHINFO_FILENAME);
+            $timestamp = date('Y_m_d_H_i_s');
+            $folderName = $baseName . '_' . $timestamp;
+            $outputDir = ($pathInfo['dirname'] ?? dirname($localFile)) . '/' . $folderName;
+
+            $params['output_directory'] = $outputDir;
+            $params['output_base_name'] = $baseName;
+            $params['output_folder'] = $folderName;
+            $params['output_timestamp'] = $timestamp;
+
+            $inputParent = trim(dirname($inputPath), '/');
+            $params['output_nc_path'] = ($inputParent === '' ? '' : '/' . $inputParent) . '/' . $folderName;
+
+            // Persister les informations enrichies pour le suivi
+            $job->setOutputFormats(json_encode($params));
+            $this->mapper->update($job);
+
             // Construire et exécuter la commande FFmpeg
             $cmd = $this->buildFFmpegCommand($localFile, $params);
             $this->logger->info("Executing: {$cmd}", ['app' => 'video_converter_fm']);
@@ -99,12 +118,60 @@ class ConversionService {
                 return false;
             }
 
-            // Marquer le job comme terminé
-            $this->mapper->updateStatus($job->getId(), 'completed');
-            $this->mapper->updateProgress($job->getId(), 100);
+            // Copier les assets associés (affiche, sous-titres)
+            $this->postProcessAssets($localFile, $params);
 
             // Re-scanner les fichiers
             $this->rescanFiles();
+
+            // Déterminer formats/renditions à partir des paramètres pour vérification
+            $profile = $params['profile'] ?? null;
+            if (is_string($profile)) {
+                $decodedProfile = json_decode($profile, true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    $profile = $decodedProfile;
+                }
+            }
+            if (!is_array($profile)) {
+                $profile = [];
+            }
+            $formats = $profile['formats'] ?? $params['selected_formats'] ?? [];
+            if (is_string($formats)) {
+                $decodedFormats = json_decode($formats, true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    $formats = $decodedFormats;
+                }
+            }
+            if (!is_array($formats)) {
+                $formats = [];
+            }
+
+            $renditions = $profile['renditions'] ?? $params['renditions'] ?? [];
+            if (is_string($renditions)) {
+                $decodedRenditions = json_decode($renditions, true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    $renditions = $decodedRenditions;
+                }
+            }
+            if (!is_array($renditions)) {
+                $renditions = [];
+            }
+            $enabledVariants = $this->extractEnabledRenditions($renditions);
+
+            // Vérifier que les artefacts attendus ont été produits
+            $wantsDash = in_array('dash', $formats, true);
+            $wantsHls = in_array('hls', $formats, true);
+            $ok = $this->verifyConversionArtifacts($params, $enabledVariants, $wantsDash, $wantsHls, $baseName);
+            if (!$ok) {
+                $errorMsg = 'Conversion errors: missing expected artifacts in output folder';
+                $this->logger->error($errorMsg, ['app' => 'video_converter_fm']);
+                $this->mapper->updateStatus($job->getId(), 'failed', $errorMsg);
+                return false;
+            }
+
+            // Marquer le job comme terminé
+            $this->mapper->updateStatus($job->getId(), 'completed');
+            $this->mapper->updateProgress($job->getId(), 100);
 
             $this->logger->info("Job {$job->getId()} completed successfully", ['app' => 'video_converter_fm']);
             return true;
@@ -185,6 +252,13 @@ class ConversionService {
             return null;
         }
 
+        $outputDir = $params['output_directory'] ?? null;
+        $outputBaseName = $params['output_base_name'] ?? pathinfo($file, PATHINFO_FILENAME);
+        if ($outputDir === null) {
+            $pathInfo = pathinfo($file);
+            $outputDir = ($pathInfo['dirname'] ?? dirname($file)) . '/' . $outputBaseName;
+        }
+
         $videoCodec = $this->sanitizeVideoCodec($profile['videoCodec'] ?? $params['codec'] ?? 'libx264');
         $audioCodec = $this->sanitizeAudioCodec($profile['audioCodec'] ?? $params['audio_codec'] ?? 'aac');
         $preset = $this->sanitizePreset($profile['preset'] ?? $params['preset'] ?? 'slow');
@@ -229,26 +303,59 @@ class ConversionService {
 
         $commands = [];
 
-        // Build codec args without audio - DASH command will generate audio
+        // Build codec args without audio - adaptive command(s) decide audio mapping
         $codecArgs = $this->buildVideoCodecArgs($enabledVariants, $videoLabels, $videoCodec, $preset, $keyframeInterval);
         $this->logCodecArgs($codecArgs, 'cmaf-unified');
 
-        // Determine if need to generate HLS manifest
-        $generateHls = in_array('hls', $formats, true);
+        $wantsDash = in_array('dash', $formats, true);
+        $wantsHls = in_array('hls', $formats, true);
 
-        // Build sole command DASH (CMAF) that generates also HLS playlist if necessary
-        $commands[] = $this->buildDashCommand(
-            $file,
-            $filterComplex,
-            $codecArgs,
-            $enabledVariants,
-            $segmentDuration,
-            $profile['dash'] ?? [],
-            $hasAudio,
-            $audioBitrate,
-            $audioCodec,
-            $generateHls
-        );
+        if ($wantsDash && $wantsHls) {
+            // Utilise une seule commande DASH avec génération HLS activée
+            $commands[] = $this->buildDashCommand(
+                $file,
+                $filterComplex,
+                $codecArgs,
+                $enabledVariants,
+                $segmentDuration,
+                $profile['dash'] ?? [],
+                $hasAudio,
+                $audioBitrate,
+                $audioCodec,
+                true, // generateHlsPlaylist = TRUE
+                $outputDir,
+                $outputBaseName
+            );
+        } elseif ($wantsDash) {
+            $commands[] = $this->buildDashCommand(
+                $file,
+                $filterComplex,
+                $codecArgs,
+                $enabledVariants,
+                $segmentDuration,
+                $profile['dash'] ?? [],
+                $hasAudio,
+                $audioBitrate,
+                $audioCodec,
+                false,
+                $outputDir,
+                $outputBaseName
+            );
+        } elseif ($wantsHls) {
+            $commands[] = $this->buildHlsCommand(
+                $file,
+                $filterComplex,
+                $codecArgs,
+                $enabledVariants,
+                $segmentDuration,
+                $profile['hls'] ?? [],
+                $hasAudio,
+                $audioBitrate,
+                $audioCodec,
+                $outputDir,
+                $outputBaseName
+            );
+        }
 
         $commands = array_values(array_filter($commands));
         if (empty($commands)) {
@@ -303,6 +410,8 @@ class ConversionService {
                         break;
                     case 'vp9':
                         $middleArgs = "-vcodec libvpx-vp9 -preset " . escapeshellarg($preset);
+                        break;
+                    default:
                         break;
                 }
             } else {
@@ -520,7 +629,8 @@ class ConversionService {
             $videoLabel = $videoLabels[$index] ?? sprintf('[v%d_out]', $index);
             $videoBitrate = $variant['videoBitrate'] . 'k';
             $bufSize = ($variant['videoBitrate'] * 2) . 'k';
-            $nameSuffix = preg_replace('/[^a-z0-9]+/i', '', strtolower($variant['id']));
+            $variantLabel = $variant['label'] ?? $variant['id'] ?? ('variant_' . $index);
+            $variantId = sprintf('stream%d', $index);
 
             $videoMapTarget = escapeshellarg($videoLabel);
 
@@ -535,7 +645,8 @@ class ConversionService {
                 sprintf('-keyint_min %d', $keyframeInterval),
                 '-sc_threshold 0',
                 sprintf('-metadata:s:v:%d variant_bitrate=%d', $index, $variant['videoBitrate'] * 1000),
-                sprintf('-metadata:s:v:%d variant_id=%s', $index, $nameSuffix ?: ('v' . $index)),
+                sprintf('-metadata:s:v:%d variant_id=%s', $index, $variantId),
+                sprintf('-metadata:s:v:%d variant_label=%s', $index, escapeshellarg($variantLabel)),
             ]);
         }
 
@@ -559,40 +670,53 @@ class ConversionService {
         bool $hasAudio,
         string $audioBitrate,
         string $audioCodec,
-        bool $generateHlsPlaylist = false
+        bool $generateHlsPlaylist,
+        string $outputDir,
+        string $baseName
     ): string {
-        $basePath = dirname($file) . '/' . pathinfo($file, PATHINFO_FILENAME);
-        $dashDir = $basePath . '_dash';
-        $manifestPath = $dashDir . '/manifest.mpd';
+        $segmentsDir = rtrim($outputDir, '/') . '/segments';
+        $dashSegmentsDir = $segmentsDir . '/dash';
+        $hlsSegmentsDir = $segmentsDir . '/hls';
+        $mpdPath = $outputDir . '/' . $baseName . '.mpd';
 
-        $dirCommand = sprintf('mkdir -p %s', escapeshellarg($dashDir));
+        // $dirCommand = sprintf(
+        //     'mkdir -p %s && mkdir -p %s && mkdir -p %s',
+        //     escapeshellarg($outputDir),
+        //     escapeshellarg($dashSegmentsDir),
+        //     escapeshellarg($hlsSegmentsDir)
+        // );
+
+        // Un seul sous-dossier segments/ (pas de séparation DASH/HLS pour éviter la duplication des segments)
+        $dirCommand = sprintf('mkdir -p %s && mkdir -p %s', 
+            escapeshellarg($outputDir),
+            escapeshellarg($segmentsDir)
+        );
 
         $useTemplate = ($options['useTemplate'] ?? true) ? 1 : 0;
         $useTimeline = ($options['useTimeline'] ?? true) ? 1 : 0;
+        $adaptationSets = escapeshellarg('id=0,streams=v id=1,streams=a');
 
-        // DASH adaptation sets: Use generic stream type selectors
-        // "id=0,streams=v" selects ALL video streams (regardless of count)
-        // "id=1,streams=a" selects ALL audio streams
-        // This is the correct way to handle multiple video variants with shared audio
-        $adaptationSets = '"id=0,streams=v id=1,streams=a"';
-
-        // For DASH: Map audio with stream index :0
         $audioArgs = [];
         if ($hasAudio) {
             $audioArgs = [
                 '-map 0:a:0',
-                sprintf('-c:a:0 %s', $audioCodec),  // WITH stream index for DASH
+                sprintf('-c:a:0 %s', $audioCodec),
                 sprintf('-b:a:0 %s', $audioBitrate),
                 '-ac 2',
             ];
         }
 
+        $commandParts = [
+            'ffmpeg -y',
+            '-i ' . escapeshellarg($file),
+        ];
+
+        if ($filterComplex !== '') {
+            $commandParts[] = '-filter_complex ' . escapeshellarg($filterComplex);
+        }
+
         $commandParts = array_merge(
-            [
-                'ffmpeg -y',
-                '-i ' . escapeshellarg($file),
-                '-filter_complex ' . escapeshellarg($filterComplex),
-            ],
+            $commandParts,
             $codecArgs,
             $audioArgs,
             [
@@ -600,21 +724,160 @@ class ConversionService {
                 '-seg_duration ' . max(1, $segmentDuration),
                 '-use_template ' . $useTemplate,
                 '-use_timeline ' . $useTimeline,
-                '-init_seg_name ' . escapeshellarg('init_$RepresentationID$.m4s'),
-                '-media_seg_name ' . escapeshellarg('chunk_$RepresentationID$_$Number$.m4s'),
+                //'-init_seg_name ' . escapeshellarg('segments/dash/init-$RepresentationID$.m4s'),
+                //'-media_seg_name ' . escapeshellarg('segments/dash/chunk-$RepresentationID$-$Number$.m4s'),
+                '-init_seg_name ' . escapeshellarg('segments/init-$RepresentationID$.m4s'),
+                '-media_seg_name ' . escapeshellarg('segments/chunk-$RepresentationID$-$Number$.m4s'),
                 '-adaptation_sets ' . $adaptationSets,
             ]
         );
 
-        /**
-         * If $generateHlsPlaylist is true, then add flags so FFmpeg also creates HLS manifest (.m3u8)
-         */
         if ($generateHlsPlaylist) {
             $commandParts[] = '-hls_playlist 1';
-            $commandParts[] = '-hls_master_pl_name master.m3u8'; // Nom du fichier HLS
+            $commandParts[] = '-hls_master_name ' . escapeshellarg($baseName . '.m3u8');
+            $commandParts[] = '-hls_time ' . max(1, $segmentDuration);
+            $commandParts[] = '-hls_segment_type fmp4';
+            $commandParts[] = '-hls_flags independent_segments';
+            
+            // Le muxer DASH avec -hls_playlist 1 génère automatiquement les playlists HLS en référençant les segments DASH existants. 
+            // Spécifier -hls_fmp4_init_filename et -hls_segment_filename crée une confusion.
+            // $commandParts[] = '-hls_fmp4_init_filename ' . escapeshellarg('segments/hls/init-stream%v.m4s');
+            // $commandParts[] = '-hls_segment_filename ' . escapeshellarg('segments/hls/chunk-stream%v-%05d.m4s');
+
+            $varStreamMap = $this->buildHlsVarStreamMap($variants, $hasAudio, 'media_');
+            if ($varStreamMap !== '') {
+                $commandParts[] = '-var_stream_map ' . escapeshellarg($varStreamMap);
+                $this->logger->debug('HLS var_stream_map: ' . $varStreamMap, ['app' => 'video_converter_fm']);
+            }
         }
 
-        return $dirCommand . ' && ' . implode(' ', array_filter($commandParts)) . ' ' . escapeshellarg($manifestPath);
+        return $dirCommand . ' && ' . implode(' ', array_filter($commandParts)) . ' ' . escapeshellarg($mpdPath);
+    }
+
+    private function buildHlsCommand(
+        string $file,
+        string $filterComplex,
+        array $codecArgs,
+        array $variants,
+        int $segmentDuration,
+        array $options,
+        bool $hasAudio,
+        string $audioBitrate,
+        string $audioCodec,
+        string $outputDir,
+        string $baseName
+    ): string {
+        $segmentsDir = rtrim($outputDir, '/') . '/segments';
+        //$hlsSegmentsDir = $segmentsDir . '/hls';
+        //$dashSegmentsDir = $segmentsDir . '/dash';
+        // $dirCommand = sprintf(
+        //     'mkdir -p %s && mkdir -p %s && mkdir -p %s',
+        //     escapeshellarg($outputDir),
+        //     escapeshellarg($dashSegmentsDir),
+        //     escapeshellarg($hlsSegmentsDir)
+        // );
+
+        $dirCommand = sprintf('mkdir -p %s && mkdir -p %s', 
+            escapeshellarg($outputDir),
+            escapeshellarg($segmentsDir)
+        );
+
+        $commandParts = [
+            'ffmpeg -y',
+            '-i ' . escapeshellarg($file),
+        ];
+
+        if ($filterComplex !== '') {
+            $commandParts[] = '-filter_complex ' . escapeshellarg($filterComplex);
+        }
+
+        $commandParts = array_merge($commandParts, $codecArgs);
+
+        // Encode audio pour chaque variante
+        if ($hasAudio) {
+            foreach ($variants as $index => $variant) {
+                $commandParts[] = '-map 0:a:0';
+                $commandParts[] = sprintf('-c:a:%d %s', $index, $audioCodec);
+                $commandParts[] = sprintf('-b:a:%d %s', $index, $audioBitrate);
+                $commandParts[] = sprintf('-ac:a:%d 2', $index);
+            }
+        }
+
+        $commandParts[] = '-f hls';
+        $commandParts[] = '-hls_time ' . max(1, $segmentDuration);
+        $commandParts[] = '-hls_playlist_type vod';
+        $commandParts[] = '-hls_segment_type fmp4';
+        $commandParts[] = '-master_pl_name ' . escapeshellarg($baseName . '.m3u8');
+        // Segments directement dans segments/ pour éviter duplication DASH/HLS
+        $commandParts[] = '-hls_segment_filename ' . escapeshellarg($segmentsDir . '/chunk-stream%v-%05d.m4s');
+        $commandParts[] = '-hls_fmp4_init_filename ' . escapeshellarg($segmentsDir . '/init-stream%v.m4s');
+
+        $hlsFlags = [];
+        if (($options['independentSegments'] ?? true) !== false) {
+            $hlsFlags[] = 'independent_segments';
+        }
+        // if (!empty($options['deleteSegments'])) {
+        //     $hlsFlags[] = 'delete_segments';
+        // }
+        if (!empty($hlsFlags)) {
+            $commandParts[] = '-hls_flags ' . implode('+', $hlsFlags);
+        }
+
+        // if (!empty($options['strftimeMkdir'])) {
+        //     $commandParts[] = '-strftime_mkdir 1';
+        // }
+
+        // Audio multiplexé
+        $varStreamMap = $this->buildHlsVarStreamMapMultiplexed($variants, $hasAudio, 'media_');
+        if ($varStreamMap !== '') {
+            $commandParts[] = '-var_stream_map ' . escapeshellarg($varStreamMap);
+            $this->logger->debug('HLS var_stream_map: ' . $varStreamMap, ['app' => 'video_converter_fm']);
+        }
+
+        // Sortie vers le master playlist
+        $commandParts[] = escapeshellarg($outputDir . '/' . $baseName . '_%v.m3u8');
+
+        return $dirCommand . ' && ' . implode(' ', array_filter($commandParts));
+    }
+
+    /**
+    * Build var_stream_map pour HLS avec audio multiplexé dans chaque variante
+    * (chaque variante a sa propre copie de l'audio)
+    */
+    private function buildHlsVarStreamMapMultiplexed(array $variants, bool $hasAudio, string $namePrefix = 'media_'): string {
+        if (empty($variants)) {
+            return '';
+        }
+
+        $entries = [];
+        foreach ($variants as $index => $variant) {
+            if ($hasAudio) {
+                // Chaque variante a son propre flux audio (a:INDEX)
+                $entries[] = sprintf('v:%d,a:%d,name:%s%d', $index, $index, $namePrefix, $index);
+            } else {
+                $entries[] = sprintf('v:%d,name:%s%d', $index, $namePrefix, $index);
+            }
+        }
+
+        return implode(' ', $entries);
+    }
+
+    private function buildHlsVarStreamMap(array $variants, bool $hasAudio, string $namePrefix = 'media_'): string {
+        if (empty($variants)) {
+            return '';
+        }
+
+        $entries = [];
+        foreach ($variants as $index => $variant) {
+            if ($hasAudio) {
+                // Tous les variants partagent la même piste audio a:0
+                $entries[] = sprintf('v:%d,a:0,name:%s%d', $index, $namePrefix, $index);
+            } else {
+                $entries[] = sprintf('v:%d,name:%s%d', $index, $namePrefix, $index);
+            }
+        }
+
+        return implode(' ', $entries);
     }
 
     /**
@@ -622,6 +885,121 @@ class ConversionService {
      */
     private function rescanFiles(): void {
         exec("php /var/www/nextcloud/occ files:scan --all > /dev/null 2>&1 &");
+    }
+
+    /**
+     * Copy poster/subtitle assets to output folder and convert SRT to VTT if needed.
+     */
+    private function postProcessAssets(string $localFile, array $params): void {
+        $outputDir = $params['output_directory'] ?? null;
+        if (!$outputDir) {
+            return;
+        }
+
+        $pathInfo = pathinfo($localFile);
+        $baseName = $pathInfo['filename'] ?? pathinfo($localFile, PATHINFO_FILENAME);
+        $inputDir = $pathInfo['dirname'] ?? dirname($localFile);
+
+        // Ensure destination exists
+        if (!is_dir($outputDir)) {
+            @mkdir($outputDir, 0755, true);
+        }
+
+        // Copy poster image if exists (jpg/png/webp)
+        $imageExts = ['jpg', 'jpeg', 'png', 'webp'];
+        foreach ($imageExts as $ext) {
+            $src = $inputDir . '/' . $baseName . '.' . $ext;
+            if (is_file($src)) {
+                $dst = $outputDir . '/' . $baseName . '.' . $ext;
+                @copy($src, $dst);
+                @chmod($dst, 0644);
+                $this->logger->info("Copied poster asset: {$src} -> {$dst}", ['app' => 'video_converter_fm']);
+                break;
+            }
+        }
+
+        // Subtitles
+        $subsVtt = $inputDir . '/' . $baseName . '.vtt';
+        $subsSrt = $inputDir . '/' . $baseName . '.srt';
+
+        $this->logger->debug('subtitles param: ' . json_encode($params['subtitles'] ?? 'NULL'), ['app'=>'video_converter_fm']);
+
+        if (is_file($subsVtt)) {
+            $dst = $outputDir . '/' . $baseName . '.vtt';
+            @copy($subsVtt, $dst);
+            @chmod($dst, 0644);
+            $this->logger->info("Copied VTT subtitle: {$subsVtt} -> {$dst}", ['app' => 'video_converter_fm']);
+        } elseif (is_file($subsSrt) && !empty($params['subtitles'])) {
+            // Convert SRT to VTT using ffmpeg
+            $ffmpeg = 'ffmpeg';
+            $in = escapeshellarg($subsSrt);
+            $out = escapeshellarg($outputDir . '/' . $baseName . '.vtt');
+            $cmd = sprintf('%s -i %s -f webvtt %s 2>&1', $ffmpeg, $in, $out);
+            $this->logger->info("Converting SRT to VTT: {$subsSrt} -> {$outputDir}/{$baseName}.vtt", ['app' => 'video_converter_fm']);
+            $output = null;
+            $ret = 0;
+            @exec($cmd, $output, $ret);
+            if ($ret === 0) {
+                @chmod($outputDir . '/' . $baseName . '.vtt', 0644);
+                $this->logger->info("Subtitle converted and copied to output folder", ['app' => 'video_converter_fm']);
+            } else {
+                $this->logger->warning("Failed to convert SRT to VTT: cmd={$cmd}", ['app' => 'video_converter_fm']);
+            }
+        }
+    }
+
+    /**
+     * Verifie que les outputs attendus ont été produits par FFmpeg
+     */
+    private function verifyConversionArtifacts(array $params, array $variants, bool $wantsDash, bool $wantsHls, string $baseName): bool {
+        $outputDir = $params['output_directory'] ?? null;
+        if (!$outputDir || !is_dir($outputDir)) {
+            $this->logger->error("Output directory missing: {$outputDir}", ['app' => 'video_converter_fm']);
+            return false;
+        }
+
+        $ok = true;
+        $segmentsDir = rtrim($outputDir, '/') . '/segments';
+    
+        // DASH
+        if ($wantsDash) {
+            $mpd = rtrim($outputDir, '/') . '/' . $baseName . '.mpd';
+            if (!is_file($mpd)) {
+                $this->logger->error("Missing MPD manifest: {$mpd}", ['app' => 'video_converter_fm']);
+                $ok = false;
+            }
+        }
+
+        // HLS
+        if ($wantsHls) {
+            $m3u8 = rtrim($outputDir, '/') . '/' . $baseName . '.m3u8';
+            if (!is_file($m3u8)) {
+                $this->logger->error("Missing HLS master playlist: {$m3u8}", ['app' => 'video_converter_fm']);
+                $ok = false;
+            }
+        
+            // Playlists variantes à la racine
+            $hlsVariants = glob(rtrim($outputDir, '/') . '/media_*.m3u8');
+            if (empty($hlsVariants)) {
+                $this->logger->error("No HLS variant playlists found", ['app' => 'video_converter_fm']);
+                $ok = false;
+            }
+        }
+
+        // Vérifier les segments (partagés pour DASH+HLS, ou dédiés pour HLS seul)
+        if (!is_dir($segmentsDir)) {
+            $this->logger->error("Missing segments dir: {$segmentsDir}", ['app' => 'video_converter_fm']);
+            $ok = false;
+        } else {
+            $init = glob($segmentsDir . '/init-*.m4s');
+            $chunks = glob($segmentsDir . '/chunk-*.m4s');
+            if (empty($init) || empty($chunks)) {
+                $this->logger->error("Missing init/chunks in: {$segmentsDir}", ['app' => 'video_converter_fm']);
+                $ok = false;
+            }
+        }
+
+        return $ok;
     }
 
     /**
