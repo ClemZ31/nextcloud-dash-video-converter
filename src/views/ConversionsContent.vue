@@ -39,7 +39,7 @@ ConversionsContent
 					<div class="job-info">
 						<div class="job-title">{{ getFileName(job.input_path) }}</div>
 						<div class="job-formats">
-							{{ t('video_converter_fm', 'Format: {format}', { format: getFormats(job.output_formats) }) }}
+							{{ formatLabel(job.output_formats) }}
 						</div>
 						<div class="job-meta">
 							<span class="job-date">{{ formatDate(job.created_at) }}</span>
@@ -177,17 +177,86 @@ const getFileName = (path) => {
 	return path.split('/').pop()
 }
 
-const getFormats = (outputFormats) => {
-	if (!outputFormats) return ''
-	try {
-		const formats = typeof outputFormats === 'string' ? JSON.parse(outputFormats) : outputFormats
-		if (Array.isArray(formats)) {
-			return formats.map(f => f.type?.toUpperCase() || '').filter(Boolean).join(', ')
-		}
-		return formats.type?.toUpperCase() || ''
-	} catch (e) {
-		return outputFormats
+const formatMap = {
+	dash: () => t('video_converter_fm', 'DASH (MPD)'),
+	hls: () => t('video_converter_fm', 'HLS (M3U8)'),
+}
+
+const normalizeFormat = (value) => {
+	if (typeof value !== 'string') {
+		return null
 	}
+	const lower = value.toLowerCase()
+	if (lower === 'dash' || lower === 'mpd') {
+		return 'dash'
+	}
+	if (lower === 'hls' || lower === 'm3u8') {
+		return 'hls'
+	}
+	return null
+}
+
+const extractFormats = (payload) => {
+	if (!payload) {
+		return []
+	}
+	let parsed = payload
+	if (typeof parsed === 'string') {
+		try {
+			parsed = JSON.parse(parsed)
+		} catch (error) {
+			return []
+		}
+	}
+	const result = []
+	const pushUnique = (format) => {
+		if (format && !result.includes(format)) {
+			result.push(format)
+		}
+	}
+	if (Array.isArray(parsed)) {
+		parsed.map(normalizeFormat).forEach(pushUnique)
+	} else if (parsed && typeof parsed === 'object') {
+		if (Array.isArray(parsed.selected_formats)) {
+			parsed.selected_formats.map(normalizeFormat).forEach(pushUnique)
+		}
+		if (Array.isArray(parsed.formats)) {
+			parsed.formats.map(normalizeFormat).forEach(pushUnique)
+		}
+		if (parsed.profile && Array.isArray(parsed.profile.formats)) {
+			parsed.profile.formats.map(normalizeFormat).forEach(pushUnique)
+		}
+		if (parsed.profile && parsed.profile.selected_formats && typeof parsed.profile.selected_formats === 'object') {
+			Object.keys(parsed.profile.selected_formats)
+				.filter((key) => parsed.profile.selected_formats[key])
+				.map(normalizeFormat)
+				.forEach(pushUnique)
+		}
+		if (parsed.selected_formats && typeof parsed.selected_formats === 'object' && !Array.isArray(parsed.selected_formats)) {
+			Object.keys(parsed.selected_formats)
+				.filter((key) => parsed.selected_formats[key])
+				.map(normalizeFormat)
+				.forEach(pushUnique)
+		}
+		if (typeof parsed.type === 'string') {
+			pushUnique(normalizeFormat(parsed.type))
+		}
+	}
+	return result
+}
+
+const formatLabel = (outputFormats) => {
+	const formats = extractFormats(outputFormats)
+	if (formats.length === 0) {
+		return t('video_converter_fm', 'Format: {format}', { format: t('video_converter_fm', 'Unknown') })
+	}
+	const readable = formats
+		.map((format) => (formatMap[format] ? formatMap[format]() : format.toUpperCase()))
+		.filter(Boolean)
+	if (readable.length === 1) {
+		return t('video_converter_fm', 'Format: {format}', { format: readable[0] })
+	}
+	return t('video_converter_fm', 'Formats: {formats}', { formats: readable.join(' + ') })
 }
 
 const formatDate = (dateString) => {
