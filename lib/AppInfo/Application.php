@@ -16,35 +16,29 @@ class Application extends App implements IBootstrap {
 
     /**
      * Register services and event listeners using the AppFramework bootstrap.
-     * This replaces the deprecated appinfo/app.php usage.
-     *
-     * @param IRegistrationContext $context
      */
     public function register(IRegistrationContext $context): void {
-        // Register the ConversionController service so the router can instantiate it.
-        // IRegistrationContext exposes registerService(...) rather than getContainer().
-        $appName = $this->appName ?? 'video_converter_fm';
+        // On définit le nom en dur pour éviter toute ambiguïté
+        $appName = 'video_converter_fm';
 
         // Register ConversionController
         $context->registerService('ConversionController', function($c) use ($appName) {
             $user = \OC::$server->getUserSession()->getUser();
             $userId = $user ? $user->getUID() : null;
             $request = \OC::$server->getRequest();
-            $conversionService = $c->query('OCA\\Video_Converter_Fm\\Service\\ConversionService');
-            $jobMapper = $c->query('OCA\\Video_Converter_Fm\\Db\\VideoJobMapper');
-            $logger = \OC::$server->get(\OCP\ILogger::class);
-            $groupManager = \OC::$server->getGroupManager();
+
+            // On utilise $c->query() avec ::class pour être sûr de récupérer les bons objets
             return new \OCA\Video_Converter_Fm\Controller\ConversionController(
-                $appName,
-                $request,
-                $userId,
-                $conversionService,
-                $jobMapper,
-                $logger,
-                $groupManager
+                $appName,                                                            // 1. AppName
+                $request,                                                            // 2. Request
+                $userId,                                                             // 3. UserId
+                $c->query(\OCA\Video_Converter_Fm\Service\ConversionService::class), // 4. Service
+                $c->query(\OCA\Video_Converter_Fm\Db\VideoJobMapper::class),         // 5. Mapper
+                $c->query(\Psr\Log\LoggerInterface::class),                          // 6. Logger (Interface standard PSR)
+                $c->query(\OCP\IGroupManager::class)                                 // 7. GroupManager
             );
         });
-        
+
         // Register PageController
         $context->registerService('PageController', function($c) use ($appName) {
             $user = \OC::$server->getUserSession()->getUser();
@@ -57,17 +51,9 @@ class Application extends App implements IBootstrap {
                 $userId
             );
         });
-
     }
 
-    /**
-     * Boot is called after all apps are registered. Keep it as a no-op for now.
-     *
-     * @param IBootContext $context
-     */
     public function boot(IBootContext $context): void {
-        // Charger le script d'intégration Files sur toutes les pages
-        // (le script lui-même vérifie s'il est sur la page Files avant de s'enregistrer)
         Util::addScript('video_converter_fm', 'conversion');
     }
 }
