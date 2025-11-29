@@ -768,16 +768,8 @@ class ConversionService {
         string $baseName
     ): string {
         $segmentsDir = rtrim($outputDir, '/') . '/segments';
-        //$hlsSegmentsDir = $segmentsDir . '/hls';
-        //$dashSegmentsDir = $segmentsDir . '/dash';
-        // $dirCommand = sprintf(
-        //     'mkdir -p %s && mkdir -p %s && mkdir -p %s',
-        //     escapeshellarg($outputDir),
-        //     escapeshellarg($dashSegmentsDir),
-        //     escapeshellarg($hlsSegmentsDir)
-        // );
 
-        $dirCommand = sprintf('mkdir -p %s && mkdir -p %s', 
+        $dirCommand = sprintf('mkdir -p %s && mkdir -p %s',
             escapeshellarg($outputDir),
             escapeshellarg($segmentsDir)
         );
@@ -791,55 +783,47 @@ class ConversionService {
             $commandParts[] = '-filter_complex ' . escapeshellarg($filterComplex);
         }
 
-        $commandParts = array_merge($commandParts, $codecArgs);
-
-        // Encode audio pour chaque variante
+        // Encoder une seule piste audio partagée pour toutes les variantes
         if ($hasAudio) {
-            foreach ($variants as $index => $variant) {
-                $commandParts[] = '-map 0:a:0';
-                $commandParts[] = sprintf('-c:a:%d %s', $index, $audioCodec);
-                $commandParts[] = sprintf('-b:a:%d %s', $index, $audioBitrate);
-                $commandParts[] = sprintf('-ac:a:%d 2', $index);
-            }
+            $commandParts[] = '-map 0:a:0';
+            $commandParts[] = sprintf('-c:a:0 %s', $audioCodec);
+            $commandParts[] = sprintf('-b:a:0 %s', $audioBitrate);
+            $commandParts[] = '-ac:a:0 2';
         }
+
+        // Ajouter les mappings vidéo
+        $commandParts = array_merge($commandParts, $codecArgs);
 
         $commandParts[] = '-f hls';
         $commandParts[] = '-hls_time ' . max(1, $segmentDuration);
         $commandParts[] = '-hls_playlist_type vod';
         $commandParts[] = '-hls_segment_type fmp4';
         $commandParts[] = '-master_pl_name ' . escapeshellarg($baseName . '.m3u8');
-        // Segments directement dans segments/ pour éviter duplication DASH/HLS
-        $commandParts[] = '-hls_segment_filename ' . escapeshellarg($segmentsDir . '/chunk-stream%v-%05d.m4s');
-        $commandParts[] = '-hls_fmp4_init_filename ' . escapeshellarg($segmentsDir . '/init-stream%v.m4s');
+
+        // Chemins relatifs pour les segments
+        $commandParts[] = '-hls_segment_filename ' . escapeshellarg('segments/chunk-stream%v-%05d.m4s');
+        $commandParts[] = '-hls_fmp4_init_filename ' . escapeshellarg('segments/init-stream%v.m4s');
 
         $hlsFlags = [];
         if (($options['independentSegments'] ?? true) !== false) {
             $hlsFlags[] = 'independent_segments';
         }
-        // if (!empty($options['deleteSegments'])) {
-        //     $hlsFlags[] = 'delete_segments';
-        // }
         if (!empty($hlsFlags)) {
             $commandParts[] = '-hls_flags ' . implode('+', $hlsFlags);
         }
 
-        // if (!empty($options['strftimeMkdir'])) {
-        //     $commandParts[] = '-strftime_mkdir 1';
-        // }
-
-        // Audio multiplexé
-        $varStreamMap = $this->buildHlsVarStreamMapMultiplexed($variants, $hasAudio, 'media_');
+        // var_stream_map avec audio partagé (a:0)
+        $varStreamMap = $this->buildHlsVarStreamMap($variants, $hasAudio, 'media_');
         if ($varStreamMap !== '') {
             $commandParts[] = '-var_stream_map ' . escapeshellarg($varStreamMap);
             $this->logger->debug('HLS var_stream_map: ' . $varStreamMap, ['app' => 'video_converter_fm']);
         }
 
-        // Sortie vers le master playlist
-        $commandParts[] = escapeshellarg($outputDir . '/' . $baseName . '_%v.m3u8');
+        // Utiliser media_%v.m3u8 (cohérent avec name:media_X)
+        $commandParts[] = escapeshellarg($outputDir . '/media_%v.m3u8');
 
         return $dirCommand . ' && ' . implode(' ', array_filter($commandParts));
     }
-
     /**
     * Build var_stream_map pour HLS avec audio multiplexé dans chaque variante
     * (chaque variante a sa propre copie de l'audio)
@@ -868,14 +852,20 @@ class ConversionService {
         }
 
         $entries = [];
+
+        // D'abord toutes les vidéos, chaque variante utilise a:0
         foreach ($variants as $index => $variant) {
             if ($hasAudio) {
-                // Tous les variants partagent la même piste audio a:0
                 $entries[] = sprintf('v:%d,a:0,name:%s%d', $index, $namePrefix, $index);
             } else {
                 $entries[] = sprintf('v:%d,name:%s%d', $index, $namePrefix, $index);
             }
         }
+
+        // // Ensuite seulement la piste audio (très important)
+        // if ($hasAudio) {
+        //     $entries[] = 'a:0,name:audio_0';
+        // }
 
         return implode(' ', $entries);
     }
@@ -918,33 +908,30 @@ class ConversionService {
             }
         }
 
-        // Subtitles
-        $subsVtt = $inputDir . '/' . $baseName . '.vtt';
-        $subsSrt = $inputDir . '/' . $baseName . '.srt';
-
-        $this->logger->debug('subtitles param: ' . json_encode($params['subtitles'] ?? 'NULL'), ['app'=>'video_converter_fm']);
-
-        if (is_file($subsVtt)) {
-            $dst = $outputDir . '/' . $baseName . '.vtt';
-            @copy($subsVtt, $dst);
-            @chmod($dst, 0644);
-            $this->logger->info("Copied VTT subtitle: {$subsVtt} -> {$dst}", ['app' => 'video_converter_fm']);
-        } elseif (is_file($subsSrt) && !empty($params['subtitles'])) {
-            // Convert SRT to VTT using ffmpeg
-            $ffmpeg = 'ffmpeg';
-            $in = escapeshellarg($subsSrt);
-            $out = escapeshellarg($outputDir . '/' . $baseName . '.vtt');
-            $cmd = sprintf('%s -i %s -f webvtt %s 2>&1', $ffmpeg, $in, $out);
-            $this->logger->info("Converting SRT to VTT: {$subsSrt} -> {$outputDir}/{$baseName}.vtt", ['app' => 'video_converter_fm']);
+        // Sous-titres : conversion de tous les SRT en VTT, copie de tous les VTT, gestion des suffixes de langue
+        // Conversion SRT -> VTT
+        foreach (glob($inputDir . '/' . $baseName . '*.srt') as $subsSrt) {
+            $suffix = substr($subsSrt, strlen($inputDir . '/' . $baseName), -4); // e.g. _fr, _en, etc.
+            $dstVtt = $outputDir . '/' . $baseName . $suffix . '.vtt';
+            $cmd = sprintf('ffmpeg -y -i %s -f webvtt %s 2>&1', escapeshellarg($subsSrt), escapeshellarg($dstVtt));
+            $this->logger->info("Converting SRT to VTT: {$subsSrt} -> {$dstVtt}", ['app' => 'video_converter_fm']);
             $output = null;
             $ret = 0;
             @exec($cmd, $output, $ret);
             if ($ret === 0) {
-                @chmod($outputDir . '/' . $baseName . '.vtt', 0644);
+                @chmod($dstVtt, 0644);
                 $this->logger->info("Subtitle converted and copied to output folder", ['app' => 'video_converter_fm']);
             } else {
                 $this->logger->warning("Failed to convert SRT to VTT: cmd={$cmd}", ['app' => 'video_converter_fm']);
             }
+        }
+        // Copie de tous les VTT
+        foreach (glob($inputDir . '/' . $baseName . '*.vtt') as $subsVtt) {
+            $suffix = substr($subsVtt, strlen($inputDir . '/' . $baseName), -4);
+            $dst = $outputDir . '/' . $baseName . $suffix . '.vtt';
+            @copy($subsVtt, $dst);
+            @chmod($dst, 0644);
+            $this->logger->info("Copied VTT subtitle: {$subsVtt} -> {$dst}", ['app' => 'video_converter_fm']);
         }
     }
 
