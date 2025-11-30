@@ -84,37 +84,68 @@
         style.id = 'video-converter-modal-styles'
         style.type = 'text/css'
         style.textContent = `
-            .vc-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 10000; }
+            .vc-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 10000; backdrop-filter: blur(2px); }
             .vc-modal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 10001; }
-            .vc-modal__dialog { width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 32px); background: var(--color-main-background, #fff); border-radius: 8px; box-shadow: 0 12px 32px rgba(0,0,0,0.25); display: flex; flex-direction: column; overflow: hidden; color-scheme: var(--nextcloud-color-scheme, light dark); }
-            .vc-modal__header { padding: 16px; border-bottom: 1px solid var(--color-border, #d1d9e0); display: flex; align-items: center; justify-content: space-between; }
-            .vc-modal__title { margin: 0; font-size: 16px; font-weight: 600; }
-            .vc-close-btn { border: none; background: transparent; cursor: pointer; font-size: 18px; color: var(--color-text-lighter, #6a737d); }
-            .vc-tabs { display: flex; border-bottom: 1px solid var(--color-border, #d1d9e0); }
-            .vc-tab-btn { flex: 1; padding: 10px 12px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-weight: 600; color: var(--color-text-lighter, #6a737d); }
-            .vc-tab-btn--active { color: var(--color-primary, #0082c9); border-bottom-color: var(--color-primary, #0082c9); }
-            .vc-modal__body { padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-            .vc-tabpanel { display: none; flex-direction: column; gap: 12px; }
+            .vc-modal__dialog { width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 32px); background: var(--color-main-background, #fff); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); display: flex; flex-direction: column; overflow: hidden; color-scheme: var(--nextcloud-color-scheme, light dark); }
+            .vc-modal__header { padding: 20px 24px; border-bottom: 1px solid var(--color-border, #e1e4e8); display: flex; align-items: center; justify-content: space-between; background: linear-gradient(135deg, var(--color-primary, #0082c9) 0%, #006eaa 100%); }
+            .vc-modal__title { margin: 0; font-size: 18px; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 10px; }
+            .vc-modal__title::before { content: '🎬'; }
+            .vc-close-btn { border: none; background: rgba(255,255,255,0.2); cursor: pointer; font-size: 18px; color: #fff; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
+            .vc-close-btn:hover { background: rgba(255,255,255,0.3); }
+            .vc-tabs { display: flex; border-bottom: 1px solid var(--color-border, #e1e4e8); background: var(--color-background-hover, #f6f8fa); }
+            .vc-tab-btn { flex: 1; padding: 14px 16px; background: none; border: none; border-bottom: 3px solid transparent; cursor: pointer; font-weight: 600; font-size: 14px; color: var(--color-text-lighter, #6a737d); transition: all 0.2s; }
+            .vc-tab-btn:hover { background: var(--color-background-dark, #eaecef); }
+            .vc-tab-btn--active { color: var(--color-primary, #0082c9); border-bottom-color: var(--color-primary, #0082c9); background: var(--color-main-background, #fff); }
+            .vc-modal__body { padding: 20px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; max-height: 60vh; }
+            .vc-tabpanel { display: none; flex-direction: column; gap: 20px; }
             .vc-tabpanel--active { display: flex; }
-            .vc-section { display: flex; flex-direction: column; gap: 8px; }
-            .vc-section__title { margin: 0; font-size: 14px; font-weight: 600; color: var(--color-text-maxcontrast, #1a2026); }
-            .vc-summary-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-            .vc-estimation-box { font-size: 13px; padding: 12px; border: 1px solid var(--color-border, #d1d9e0); border-radius: 6px; background: var(--color-background-hover, #f5f6f7); }
-            .vc-warning { font-size: 13px; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--color-warning, #f0a500); color: var(--color-warning, #f0a500); background: rgba(240,165,0,0.08); }
-            .vc-button-row { display: flex; flex-wrap: wrap; gap: 8px; }
-            .vc-button { padding: 8px 12px; border-radius: 6px; border: 1px solid var(--color-border, #d1d9e0); background: var(--color-main-background, #fff); cursor: pointer; font-size: 13px; }
-            .vc-button--primary { background: var(--color-primary, #0082c9); color: var(--color-primary-text, #fff); border-color: var(--color-primary, #0082c9); }
-            .vc-modal__footer { padding: 12px 16px; border-top: 1px solid var(--color-border, #d1d9e0); display: flex; justify-content: flex-end; gap: 8px; }
-            .vc-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
-            .vc-form-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-            .vc-form-field input[type="number"], .vc-form-field select { padding: 6px 8px; border-radius: 6px; border: 1px solid var(--color-border, #d1d9e0); background: var(--color-main-background, #fff); }
-            .vc-format-toggle { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
-            .vc-rendition-list { display: flex; flex-direction: column; gap: 8px; }
-            .vc-rendition-item { border: 1px solid var(--color-border, #d1d9e0); border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+            .vc-section { display: flex; flex-direction: column; gap: 12px; padding: 16px; background: var(--color-background-hover, #f6f8fa); border-radius: 10px; border: 1px solid var(--color-border, #e1e4e8); }
+            .vc-section__title { margin: 0; font-size: 13px; font-weight: 700; color: var(--color-text-maxcontrast, #1a2026); text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 8px; }
+            .vc-section__title::before { content: ''; width: 4px; height: 16px; background: var(--color-primary, #0082c9); border-radius: 2px; }
+            .vc-summary-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+            .vc-estimation-box { font-size: 13px; padding: 16px; border: 1px solid var(--color-border, #e1e4e8); border-radius: 10px; background: linear-gradient(135deg, var(--color-background-hover, #f6f8fa) 0%, var(--color-main-background, #fff) 100%); }
+            .vc-warning { font-size: 13px; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--color-warning, #f0a500); color: var(--color-warning-text, #b37400); background: rgba(240,165,0,0.1); display: flex; align-items: center; gap: 8px; }
+            .vc-warning::before { content: '⚠️'; }
+            .vc-button-row { display: flex; flex-wrap: wrap; gap: 10px; }
+            .vc-button { padding: 10px 16px; border-radius: 8px; border: 1px solid var(--color-border, #e1e4e8); background: var(--color-main-background, #fff); cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; }
+            .vc-button:hover { background: var(--color-background-hover, #f6f8fa); transform: translateY(-1px); }
+            .vc-button--primary { background: linear-gradient(135deg, var(--color-primary, #0082c9) 0%, #006eaa 100%); color: var(--color-primary-text, #fff); border-color: var(--color-primary, #0082c9); box-shadow: 0 2px 8px rgba(0,130,201,0.3); }
+            .vc-button--primary:hover { box-shadow: 0 4px 12px rgba(0,130,201,0.4); transform: translateY(-1px); }
+            .vc-button--small { padding: 6px 12px; font-size: 12px; }
+            .vc-modal__footer { padding: 16px 24px; border-top: 1px solid var(--color-border, #e1e4e8); display: flex; justify-content: flex-end; gap: 10px; background: var(--color-background-hover, #f6f8fa); }
+            .vc-form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+            .vc-form-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+            .vc-form-field label { font-weight: 500; color: var(--color-text-maxcontrast, #444); }
+            .vc-form-field input[type="number"], .vc-form-field select { padding: 10px 12px; border-radius: 8px; border: 1px solid var(--color-border, #e1e4e8); background: var(--color-main-background, #fff); font-size: 13px; transition: border-color 0.2s, box-shadow 0.2s; }
+            .vc-form-field input[type="number"]:focus, .vc-form-field select:focus { outline: none; border-color: var(--color-primary, #0082c9); box-shadow: 0 0 0 3px rgba(0,130,201,0.15); }
+            .vc-format-toggle { display: flex; gap: 16px; }
+            .vc-format-toggle label { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--color-main-background, #fff); border: 2px solid var(--color-border, #e1e4e8); border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; flex: 1; }
+            .vc-format-toggle label:hover { border-color: var(--color-primary, #0082c9); background: rgba(0,130,201,0.05); }
+            .vc-format-toggle input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--color-primary, #0082c9); }
+            .vc-format-toggle input[type="checkbox"]:checked + span { color: var(--color-primary, #0082c9); }
+            .vc-rendition-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+            .vc-rendition-item { border: 2px solid var(--color-border, #e1e4e8); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 12px; background: var(--color-main-background, #fff); transition: all 0.2s; }
+            .vc-rendition-item:hover { border-color: var(--color-primary-element-light, #a8d4f0); }
+            .vc-rendition-item--disabled { opacity: 0.5; }
             .vc-rendition-header { display: flex; justify-content: space-between; align-items: center; }
-            .vc-rendition-meta { font-size: 12px; color: var(--color-text-lighter, #6a737d); }
-            .vc-rendition-inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; font-size: 12px; }
-            @media (max-width: 520px) { .vc-modal__dialog { width: calc(100vw - 24px); } }
+            .vc-rendition-header label { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; cursor: pointer; }
+            .vc-rendition-header input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--color-primary, #0082c9); }
+            .vc-rendition-meta { font-size: 11px; color: var(--color-text-lighter, #6a737d); background: var(--color-background-dark, #eaecef); padding: 4px 8px; border-radius: 4px; }
+            .vc-rendition-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12px; }
+            .vc-rendition-inputs label { display: flex; flex-direction: column; gap: 4px; color: var(--color-text-lighter, #6a737d); }
+            .vc-rendition-inputs input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--color-border, #e1e4e8); background: var(--color-background-hover, #f6f8fa); font-size: 12px; width: 100%; box-sizing: border-box; }
+            .vc-rendition-inputs input:focus { outline: none; border-color: var(--color-primary, #0082c9); background: var(--color-main-background, #fff); }
+            .vc-checkbox-field { display: flex; align-items: center; gap: 10px; padding: 12px; background: var(--color-main-background, #fff); border: 1px solid var(--color-border, #e1e4e8); border-radius: 8px; cursor: pointer; transition: all 0.2s; }
+            .vc-checkbox-field:hover { border-color: var(--color-primary, #0082c9); }
+            .vc-checkbox-field input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--color-primary, #0082c9); }
+            .vc-section-row { display: flex; gap: 16px; }
+            .vc-section-row > .vc-section { flex: 1; }
+            @media (max-width: 600px) { 
+                .vc-modal__dialog { width: calc(100vw - 24px); } 
+                .vc-rendition-list { grid-template-columns: 1fr; }
+                .vc-form-grid { grid-template-columns: 1fr; }
+                .vc-format-toggle { flex-direction: column; }
+            }
         `
         document.head.appendChild(style)
     }
@@ -315,22 +346,27 @@
             }
         }
 
+        const getResolutionIcon = (id) => {
+            const icons = { '1080p': '🎬', '720p': '📺', '480p': '📱', '360p': '📲', '240p': '📟', '144p': '⌚' }
+            return icons[id] || '🎥'
+        }
+
         const renditionMarkup = RENDITION_PRESETS.map((preset) => `
             <div class="vc-rendition-item" data-rendition="${preset.id}">
                 <div class="vc-rendition-header">
                     <label>
                         <input type="checkbox" class="vc-rendition-toggle" data-resolution="${preset.id}" />
-                        <span>${preset.label}</span>
+                        <span>${getResolutionIcon(preset.id)} ${preset.label}</span>
                     </label>
                     <span class="vc-rendition-meta">${preset.resolution}</span>
                 </div>
                 <div class="vc-rendition-inputs">
                     <label>
-                        ${tnc('video_converter_fm', 'Video bitrate (Kbps)')}
+                        ${tnc('video_converter_fm', 'Vidéo')} (Kbps)
                         <input type="number" min="100" data-role="video" data-resolution="${preset.id}" />
                     </label>
                     <label>
-                        ${tnc('video_converter_fm', 'Audio bitrate (Kbps)')}
+                        ${tnc('video_converter_fm', 'Audio')} (Kbps)
                         <input type="number" min="32" data-role="audio" data-resolution="${preset.id}" />
                     </label>
                 </div>
@@ -352,23 +388,23 @@
                     <div class="vc-modal__body">
                         <div class="vc-tabpanel vc-tabpanel--active" data-vc-panel="simple">
                             <div class="vc-section">
-                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Fichier')}</h3>
+                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Fichier source')}</h3>
                                 <ul class="vc-summary-list">
-                                    <li><strong>${filename}</strong></li>
+                                    <li><strong>📁 ${filename}</strong></li>
                                     ${videoInfoHtml}
                                 </ul>
                             </div>
                             <div class="vc-section">
-                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Profil par défaut')}</h3>
+                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Profil de conversion')}</h3>
                                 <ul class="vc-summary-list" id="vc-simple-summary"></ul>
                             </div>
                             <div class="vc-estimation-box" id="vc-simple-estimation"></div>
-                            <div class="vc-button-row">
-                                <button type="button" class="vc-button vc-button--primary" data-vc-action="start-simple" data-vc-disable-while-submitting>
-                                    ${tnc('video_converter_fm', 'Démarrer la conversion')}
+                            <div class="vc-button-row" style="justify-content: center; gap: 12px;">
+                                <button type="button" class="vc-button vc-button--primary" data-vc-action="start-simple" data-vc-disable-while-submitting style="padding: 12px 32px; font-size: 14px;">
+                                    🚀 ${tnc('video_converter_fm', 'Démarrer la conversion')}
                                 </button>
-                                <button type="button" class="vc-button" data-vc-tab="advanced">
-                                    ${tnc('video_converter_fm', 'Personnaliser...')}
+                                <button type="button" class="vc-button" data-vc-tab="advanced" style="padding: 12px 20px;">
+                                    ⚙️ ${tnc('video_converter_fm', 'Personnaliser...')}
                                 </button>
                             </div>
                         </div>
@@ -376,25 +412,27 @@
                             <div class="vc-section">
                                 <h3 class="vc-section__title">${tnc('video_converter_fm', 'Formats de sortie')}</h3>
                                 <div class="vc-format-toggle">
-                                    <label><input type="checkbox" id="vc-format-dash" /> DASH (MPD)</label>
-                                    <label><input type="checkbox" id="vc-format-hls" /> HLS (M3U8)</label>
+                                    <label><input type="checkbox" id="vc-format-dash" /><span>📦 DASH (MPD)</span></label>
+                                    <label><input type="checkbox" id="vc-format-hls" /><span>📺 HLS (M3U8)</span></label>
                                 </div>
                                 <div class="vc-warning vc-warning--error" id="vc-format-warning" hidden>
                                     ${tnc('video_converter_fm', 'Sélectionnez au moins un format de sortie.')}
                                 </div>
                             </div>
                             <div class="vc-section">
-                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Renditions')}</h3>
-                                <div class="vc-button-row">
-                                    <button type="button" class="vc-button" data-vc-action="load-defaults">${tnc('video_converter_fm', 'Charger les valeurs par défaut')}</button>
+                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Résolutions')}</h3>
+                                <div class="vc-button-row" style="margin-bottom: 8px;">
+                                    <button type="button" class="vc-button vc-button--small" data-vc-action="load-defaults">🔄 ${tnc('video_converter_fm', 'Réinitialiser')}</button>
+                                    <button type="button" class="vc-button vc-button--small" data-vc-action="select-all-renditions">✅ ${tnc('video_converter_fm', 'Tout sélectionner')}</button>
+                                    <button type="button" class="vc-button vc-button--small" data-vc-action="deselect-all-renditions">❌ ${tnc('video_converter_fm', 'Tout désélectionner')}</button>
                                 </div>
                                 <div class="vc-rendition-list">${renditionMarkup}</div>
                             </div>
                             <div class="vc-section">
-                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Paramètres FFmpeg')}</h3>
+                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Encodage')}</h3>
                                 <div class="vc-form-grid">
                                     <div class="vc-form-field">
-                                        <label for="vc-video-codec">${tnc('video_converter_fm', 'Codec vidéo')}</label>
+                                        <label for="vc-video-codec">🎥 ${tnc('video_converter_fm', 'Codec vidéo')}</label>
                                         <select id="vc-video-codec">
                                             <option value="libx264">H.264 (libx264)</option>
                                             <option value="libx265">H.265 (libx265)</option>
@@ -402,7 +440,7 @@
                                         </select>
                                     </div>
                                     <div class="vc-form-field">
-                                        <label for="vc-audio-codec">${tnc('video_converter_fm', 'Codec audio')}</label>
+                                        <label for="vc-audio-codec">🔊 ${tnc('video_converter_fm', 'Codec audio')}</label>
                                         <select id="vc-audio-codec">
                                             <option value="aac">AAC</option>
                                             <option value="opus">Opus</option>
@@ -410,29 +448,31 @@
                                         </select>
                                     </div>
                                     <div class="vc-form-field">
-                                        <label for="vc-preset">${tnc('video_converter_fm', 'Préréglage FFmpeg')}</label>
+                                        <label for="vc-preset">⚡ ${tnc('video_converter_fm', 'Préréglage vitesse/qualité')}</label>
                                         <select id="vc-preset">
-                                            <option value="ultrafast">ultrafast</option>
-                                            <option value="superfast">superfast</option>
-                                            <option value="veryfast">veryfast</option>
-                                            <option value="fast">fast</option>
-                                            <option value="medium">medium</option>
-                                            <option value="slow">slow</option>
-                                            <option value="slower">slower</option>
-                                            <option value="veryslow">veryslow</option>
+                                            <option value="ultrafast">🚀 Ultra rapide (qualité basse)</option>
+                                            <option value="superfast">⚡ Super rapide</option>
+                                            <option value="veryfast">💨 Très rapide</option>
+                                            <option value="fast">🏃 Rapide</option>
+                                            <option value="medium">⚖️ Équilibré</option>
+                                            <option value="slow">🎯 Lent (bonne qualité)</option>
+                                            <option value="slower">✨ Très lent</option>
+                                            <option value="veryslow">💎 Ultra lent (meilleure qualité)</option>
                                         </select>
-                                    </div>
-                                    <div class="vc-form-field">
-                                        <label>
-                                            <input type="checkbox" id="vc-subtitles" /> ${tnc('video_converter_fm', 'Convertir les sous-titres (SRT en WebVTT)')}
-                                        </label>
                                     </div>
                                 </div>
                             </div>
-                            <div class="vc-estimation-box vc-estimation-box--warning" id="vc-advanced-estimation"></div>
-                            <div class="vc-button-row">
-                                <button type="button" class="vc-button vc-button--primary" data-vc-action="start-advanced" data-vc-disable-while-submitting>
-                                    ${tnc('video_converter_fm', 'Démarrer la conversion personnalisée')}
+                            <div class="vc-section">
+                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Options')}</h3>
+                                <label class="vc-checkbox-field">
+                                    <input type="checkbox" id="vc-subtitles" />
+                                    <span>📝 ${tnc('video_converter_fm', 'Convertir les sous-titres (SRT → WebVTT)')}</span>
+                                </label>
+                            </div>
+                            <div class="vc-estimation-box" id="vc-advanced-estimation"></div>
+                            <div class="vc-button-row" style="justify-content: center;">
+                                <button type="button" class="vc-button vc-button--primary" data-vc-action="start-advanced" data-vc-disable-while-submitting style="padding: 12px 32px; font-size: 14px;">
+                                    🚀 ${tnc('video_converter_fm', 'Démarrer la conversion')}
                                 </button>
                             </div>
                         </div>
@@ -812,6 +852,24 @@
                 notify(tnc('video_converter_fm', 'Default settings loaded.'))
                 break
             }
+            case 'select-all-renditions': {
+                dialog.querySelectorAll('.vc-rendition-toggle').forEach((checkbox) => {
+                    checkbox.checked = true
+                })
+                const settings = collectAdvancedSettings(dialog)
+                renderSimpleSummary(dialog, settings)
+                updateAdvancedEstimation(dialog, settings)
+                break
+            }
+            case 'deselect-all-renditions': {
+                dialog.querySelectorAll('.vc-rendition-toggle').forEach((checkbox) => {
+                    checkbox.checked = false
+                })
+                const settings = collectAdvancedSettings(dialog)
+                renderSimpleSummary(dialog, settings)
+                updateAdvancedEstimation(dialog, settings)
+                break
+            }
             }
         })
 
@@ -824,16 +882,29 @@
             switchTab(dialog, tabButton.dataset.vcTab)
         })
 
+        const updateRenditionVisualState = () => {
+            dialog.querySelectorAll('.vc-rendition-item').forEach((item) => {
+                const checkbox = item.querySelector('.vc-rendition-toggle')
+                if (checkbox) {
+                    item.classList.toggle('vc-rendition-item--disabled', !checkbox.checked)
+                }
+            })
+        }
+
         const handleAdvancedChange = () => {
             const settings = collectAdvancedSettings(dialog)
             renderSimpleSummary(dialog, settings)
             updateAdvancedEstimation(dialog, settings)
+            updateRenditionVisualState()
         }
 
         dialog.querySelectorAll('.vc-tabpanel[data-vc-panel="advanced"] input, .vc-tabpanel[data-vc-panel="advanced"] select').forEach((input) => {
             input.addEventListener('input', handleAdvancedChange)
             input.addEventListener('change', handleAdvancedChange)
         })
+
+        // Initialize visual state
+        updateRenditionVisualState()
     }
 
     function parseContext(node) {
