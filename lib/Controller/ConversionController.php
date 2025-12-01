@@ -12,6 +12,7 @@ use OC\Files\Filesystem;
 use OCA\Video_Converter_Fm\Service\ConversionService;
 use OCA\Video_Converter_Fm\Db\VideoJobMapper;
 use OCP\IGroupManager;
+use OCP\Files\IRootFolder;
 
 
 /**
@@ -27,6 +28,7 @@ class ConversionController extends Controller
 	protected $request;
     private $logger;
 	private $groupManager;
+	private $rootFolder;
 
 	/**
 	 * @NoAdminRequired
@@ -38,7 +40,8 @@ class ConversionController extends Controller
 		ConversionService $conversionService,
 		VideoJobMapper $jobMapper,
         \Psr\Log\LoggerInterface $logger,
-		IGroupManager $groupManager
+		IGroupManager $groupManager,
+		IRootFolder $rootFolder
 	) {
 		parent::__construct($AppName, $request);
 		$this->request = $request;
@@ -47,6 +50,7 @@ class ConversionController extends Controller
 		$this->jobMapper = $jobMapper;
         $this->logger = $logger;
 		$this->groupManager = $groupManager;
+		$this->rootFolder = $rootFolder;
 	}
 
 	public function getFile($directory, $fileName)
@@ -568,5 +572,64 @@ class ConversionController extends Controller
 			$this->logger->error('Error probing video: ' . $e->getMessage(), ['app' => 'video_converter_fm']);
 			return new DataResponse(['error' => $e->getMessage()], 500);
 		}
+	}
+
+	/**
+	 * Vérifie le statut du dossier output avant suppression/cancellation
+	 * @NoAdminRequired
+	 * @NoCSRFRequired
+	 */
+	public function checkDeleteOrCancel($id, $action) {
+		$job = $this->jobMapper->findById($id);
+		$formats = json_decode($job->getOutputFormats() ?? '', true);
+		$outputDir = $formats['output_directory'] ?? null;
+		if (!$outputDir) {
+			return new DataResponse([
+				'case' => 'no_output_path',
+				'message' => 'Chemin de sortie introuvable dans la base. Voulez-vous quand même supprimer la ligne du job ?'
+			]);
+		}
+		if (!is_dir($outputDir)) {
+			return new DataResponse([
+				'case' => 'output_missing',
+				'message' => 'Le dossier de sortie n’existe plus à l’emplacement attendu. Voulez-vous quand même supprimer la ligne du job ?'
+			]);
+		}
+		return new DataResponse([
+			'case' => 'output_exists',
+			'message' => 'Voulez-vous supprimer les fichiers de sortie en plus de la ligne du job ?'
+		]);
+	}
+	
+	/**
+	 * Supprime ou annule un job, et ses fichiers output si demandé
+	 * @NoAdminRequired
+	 * @NoCSRFRequired
+	 */
+	public function deleteOrCancel($id, $action) {
+		$job = $this->jobMapper->findById($id);
+		$formats = json_decode($job->getOutputFormats() ?? '', true);
+		$outputDir = $formats['output_directory'] ?? null;
+		$deleteFiles = isset($_POST['deleteFiles']) ? (bool)$_POST['deleteFiles'] : false;
+		$errors = [];
+		if ($deleteFiles && $outputDir && is_dir($outputDir)) {
+			$it = new \RecursiveDirectoryIterator($outputDir, \FilesystemIterator::SKIP_DOTS);
+			$files = new \RecursiveIteratorIterator($it, \RecursiveIteratorIterator::CHILD_FIRST);
+			foreach ($files as $file) {
+				if ($file->isDir()) {
+					@rmdir($file->getRealPath());
+				} else {
+					@unlink($file->getRealPath());
+				}
+			}
+			@rmdir($outputDir);
+		} elseif ($deleteFiles && $outputDir && !is_dir($outputDir)) {
+			$errors[] = 'Le dossier output n’existe plus.';
+		}
+		$this->jobMapper->delete($job);
+		return new DataResponse([
+			'success' => true,
+			'errors' => $errors
+		]);
 	}
 }

@@ -35,7 +35,8 @@ class Application extends App implements IBootstrap {
                 $c->query(\OCA\Video_Converter_Fm\Service\ConversionService::class), // 4. Service
                 $c->query(\OCA\Video_Converter_Fm\Db\VideoJobMapper::class),         // 5. Mapper
                 $c->query(\Psr\Log\LoggerInterface::class),                          // 6. Logger (Interface standard PSR)
-                $c->query(\OCP\IGroupManager::class)                                 // 7. GroupManager
+                $c->query(\OCP\IGroupManager::class),                                // 7. GroupManager
+                $c->query(\OCP\Files\IRootFolder::class)                             // 8. RootFolder
             );
         });
 

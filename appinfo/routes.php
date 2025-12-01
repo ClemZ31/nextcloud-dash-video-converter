@@ -54,6 +54,15 @@ return [
             'url' => 'conversions', 
             'verb' => 'GET'
         ],
-
+        [
+            'name' => 'conversion#checkDeleteOrCancel', 
+            'url' => 'api/jobs/{id}/action/{action}', 
+            'verb' => 'GET'
+        ],
+        [
+            'name' => 'conversion#deleteOrCancel', 
+            'url' => 'api/jobs/{id}/action/{action}', 
+            'verb' => 'POST'
+        ]
     ]
 ];

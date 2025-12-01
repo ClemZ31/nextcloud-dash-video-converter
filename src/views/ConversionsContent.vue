@@ -47,9 +47,6 @@ ConversionsContent
 								· {{ formatDuration(job.created_at, job.completed_at) }}
 							</span>
 						</div>
-						<div class="job-creator">
-							{{ t('video_converter_fm', 'Créé par : {user}', { user: job.user_id }) }}
-						</div>
 					</div>					<div class="job-status">
 						<!-- Barre de progression pour tous les jobs en cours (pending ou processing avec progress) -->
 						<div v-if="job.status === 'pending' || (job.status === 'processing' && job.progress > 0 && job.progress < 100)" class="progress-container">
@@ -74,12 +71,12 @@ ConversionsContent
 						<div class="job-actions">
 							<!-- Show delete button only if job belongs to current user -->
 							<NcButton
-								v-if="canDeleteJob(job)"
+								v-if="canDeleteJob(job) && getActionButton(job)"
 								type="tertiary"
 								size="small"
 								class="delete-btn"
-								@click="onDelete(job)">
-								{{ t('video_converter_fm', 'Supprimer') }}
+								@click="onJobAction(job)">
+								{{ getActionButton(job).label }}
 							</NcButton>
 							<!-- Show username badge if viewing all jobs and job belongs to someone else -->
 							<span v-if="showAllJobs && job.user_id !== currentUserId" class="job-owner-badge">
@@ -90,6 +87,27 @@ ConversionsContent
 					</div>
 				</div>
 			</div>
+			
+			<!-- Dialog de confirmation suppression/annulation -->
+			<NcDialog
+				v-if="dialog.show"
+				:name="dialog.title"
+				@close="dialog.cancel">
+				<p>{{ dialog.message }}</p>
+				<div v-if="dialog.case === 'output_exists'" class="delete-files-checkbox">
+					<NcCheckboxRadioSwitch :checked.sync="deleteFilesChecked">
+						{{ t('video_converter_fm', 'Supprimer aussi les fichiers de sortie') }}
+					</NcCheckboxRadioSwitch>
+				</div>
+				<template #actions>
+					<NcButton type="secondary" @click="dialog.cancel">
+						{{ t('video_converter_fm', 'Annuler') }}
+					</NcButton>
+					<NcButton type="primary" :loading="dialogLoading" @click="dialog.confirm">
+						{{ t('video_converter_fm', 'Confirmer') }}
+					</NcButton>
+				</template>
+			</NcDialog>
 
 			<!-- Paramètres -->
 			<div v-else-if="section === 'settings'" class="settings-section">
@@ -116,7 +134,7 @@ import { useRoute } from 'vue-router'
 import { generateUrl } from '@nextcloud/router'
 import { translate as t } from '@nextcloud/l10n'
 import axios from '@nextcloud/axios'
-import { NcAppContent, NcEmptyContent, NcIconSvgWrapper, NcLoadingIcon, NcProgressBar, NcButton, NcCheckboxRadioSwitch } from '@nextcloud/vue'
+import { NcAppContent, NcEmptyContent, NcIconSvgWrapper, NcLoadingIcon, NcProgressBar, NcButton, NcCheckboxRadioSwitch, NcDialog } from '@nextcloud/vue'
 import convertIcon from '../../img/convert_icon.svg?raw'
 
 const route = useRoute()
@@ -316,6 +334,58 @@ const onDelete = async (job) => {
 		console.error('Failed to delete job', e)
 		alert(t('video_converter_fm', 'Échec de la suppression du job'))
 	}
+}
+
+// Dialog state
+const dialog = ref({ show: false, title: '', message: '', case: '', confirm: null, cancel: null })
+const dialogLoading = ref(false)
+const deleteFilesChecked = ref(true)
+
+function getActionButton(job) {
+    if (job.status === 'completed' || job.status === 'failed') {
+        return { label: t('video_converter_fm', 'Supprimer'), type: 'delete' }
+    }
+    if (job.status === 'processing' || job.status === 'pending') {
+        return { label: t('video_converter_fm', 'Annuler'), type: 'cancel' }
+    }
+    return null
+}
+
+async function onJobAction(job) {
+    const action = getActionButton(job)
+    if (!action) return
+    dialogLoading.value = true
+    deleteFilesChecked.value = true // Reset checkbox
+    try {
+        const url = generateUrl(`/apps/video_converter_fm/api/jobs/${job.id}/action/${action.type}`)
+        const res = await axios.get(url)
+        dialog.value = {
+            show: true,
+            title: action.label,
+            message: res.data.message,
+            case: res.data.case,
+            confirm: async () => {
+                dialogLoading.value = true
+                await axios.post(url, { deleteFiles: res.data.case === 'output_exists' && deleteFilesChecked.value })
+                dialog.value.show = false
+                dialogLoading.value = false
+                fetchJobs()
+            },
+            cancel: () => {
+                dialog.value.show = false
+            }
+        }
+    } catch (e) {
+        dialog.value = {
+            show: true,
+            title: t('video_converter_fm', 'Erreur'),
+            message: t('video_converter_fm', 'Impossible de vérifier le statut du job.'),
+            case: 'error',
+            confirm: () => { dialog.value.show = false },
+            cancel: () => { dialog.value.show = false }
+        }
+    }
+    dialogLoading.value = false
 }
 
 // Lifecycle

@@ -992,6 +992,17 @@ class ConversionService {
             return 1;
         }
 
+        // Stocker le PID du process FFmpeg pour pouvoir le tuer en cas d'annulation
+        $status = proc_get_status($process);
+        $pid = $status['pid'] ?? null;
+        if ($pid) {
+            $params = json_decode($job->getOutputFormats(), true);
+            $params['ffmpeg_pid'] = $pid;
+            $job->setOutputFormats(json_encode($params));
+            $this->mapper->update($job);
+            $this->logger->debug("FFmpeg started with PID: $pid for job #{$job->getId()}", ['app' => 'video_converter_fm']);
+        }
+
         fclose($pipes[0]);
         stream_set_blocking($pipes[2], false);
 
