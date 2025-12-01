@@ -610,26 +610,74 @@ class ConversionController extends Controller
 		$job = $this->jobMapper->findById($id);
 		$formats = json_decode($job->getOutputFormats() ?? '', true);
 		$outputDir = $formats['output_directory'] ?? null;
-		$deleteFiles = isset($_POST['deleteFiles']) ? (bool)$_POST['deleteFiles'] : false;
+		$outputNcPath = $formats['output_nc_path'] ?? null;
+		
+		// Lire le body JSON de la requête (Axios envoie du JSON, pas form-urlencoded)
+		$input = file_get_contents('php://input');
+		$data = json_decode($input, true) ?? [];
+		$deleteFiles = isset($data['deleteFiles']) ? (bool)$data['deleteFiles'] : false;
 		$errors = [];
-		if ($deleteFiles && $outputDir && is_dir($outputDir)) {
-			$it = new \RecursiveDirectoryIterator($outputDir, \FilesystemIterator::SKIP_DOTS);
-			$files = new \RecursiveIteratorIterator($it, \RecursiveIteratorIterator::CHILD_FIRST);
-			foreach ($files as $file) {
-				if ($file->isDir()) {
-					@rmdir($file->getRealPath());
+		
+		$this->logger->info("deleteOrCancel called: jobId={$id}, action={$action}, deleteFiles=" . ($deleteFiles ? 'true' : 'false') . ", outputNcPath={$outputNcPath}", ['app' => 'video_converter_fm']);
+		
+		if ($deleteFiles && $outputNcPath) {
+			// Utiliser l'API Nextcloud pour supprimer le dossier (met à jour le cache)
+			try {
+				$userFolder = $this->rootFolder->getUserFolder($job->getUserId());
+				if ($userFolder->nodeExists($outputNcPath)) {
+					$node = $userFolder->get($outputNcPath);
+					$node->delete();
+					$this->logger->info("Deleted output folder via Nextcloud API: {$outputNcPath}", ['app' => 'video_converter_fm']);
 				} else {
-					@unlink($file->getRealPath());
+					$this->logger->warning("Output folder not found in Nextcloud: {$outputNcPath}", ['app' => 'video_converter_fm']);
+					// Essayer avec le chemin filesystem direct en fallback
+					if ($outputDir && is_dir($outputDir)) {
+						$this->deleteDirectoryRecursive($outputDir);
+						$this->logger->info("Deleted output folder via filesystem: {$outputDir}", ['app' => 'video_converter_fm']);
+					} else {
+						$errors[] = 'Le dossier output n\'existe plus.';
+					}
 				}
+			} catch (\Exception $e) {
+				$this->logger->error("Failed to delete output folder: " . $e->getMessage(), ['app' => 'video_converter_fm']);
+				$errors[] = 'Erreur lors de la suppression du dossier: ' . $e->getMessage();
 			}
-			@rmdir($outputDir);
-		} elseif ($deleteFiles && $outputDir && !is_dir($outputDir)) {
-			$errors[] = 'Le dossier output n’existe plus.';
+		} elseif ($deleteFiles && !$outputNcPath && $outputDir) {
+			// Fallback: supprimer via filesystem si pas de chemin NC
+			if (is_dir($outputDir)) {
+				$this->deleteDirectoryRecursive($outputDir);
+				$this->logger->info("Deleted output folder via filesystem fallback: {$outputDir}", ['app' => 'video_converter_fm']);
+			} else {
+				$errors[] = 'Le dossier output n\'existe plus.';
+			}
 		}
+		
+		// Supprimer le job de la base de données
 		$this->jobMapper->delete($job);
+		$this->logger->info("Deleted job #{$id} from database", ['app' => 'video_converter_fm']);
+		
 		return new DataResponse([
 			'success' => true,
 			'errors' => $errors
 		]);
+	}
+	
+	/**
+	 * Supprime un dossier de manière récursive
+	 */
+	private function deleteDirectoryRecursive($dir) {
+		if (!is_dir($dir)) {
+			return;
+		}
+		$it = new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS);
+		$files = new \RecursiveIteratorIterator($it, \RecursiveIteratorIterator::CHILD_FIRST);
+		foreach ($files as $file) {
+			if ($file->isDir()) {
+				@rmdir($file->getRealPath());
+			} else {
+				@unlink($file->getRealPath());
+			}
+		}
+		@rmdir($dir);
 	}
 }

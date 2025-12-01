@@ -16,12 +16,14 @@ ConversionsContent
 
 			<!-- Liste des conversions -->
 			<div v-if="section === 'conversions'" class="conversions-list">
-				<!-- Loading state -->
-				<NcLoadingIcon v-if="loading && jobs.length === 0" :size="64" />
+				<!-- Loading state (spinner global si loading initial OU rechargement) -->
+				<div v-if="loading" class="loading-container">
+					<NcLoadingIcon :size="64" />
+				</div>
 
 				<!-- Empty state -->
 				<NcEmptyContent
-					v-else-if="!loading && jobs.length === 0"
+					v-else-if="jobs.length === 0"
 					:name="t('video_converter_fm', 'Aucune conversion')"
 					:description="t('video_converter_fm', 'Les conversions lancées depuis l\'explorateur de fichiers apparaîtront ici.')">
 					<template #icon>
@@ -40,6 +42,9 @@ ConversionsContent
 						<div class="job-title">{{ getFileName(job.input_path) }}</div>
 						<div class="job-formats">
 							{{ formatLabel(job.output_formats) }}
+						</div>
+						<div v-if="getOutputPath(job.output_formats)" class="job-output-path">
+							{{ t('video_converter_fm', 'Sortie') }}: {{ getOutputPath(job.output_formats) }}
 						</div>
 						<div class="job-meta">
 							<span class="job-date">{{ formatDate(job.created_at) }}</span>
@@ -92,12 +97,17 @@ ConversionsContent
 			<NcDialog
 				v-if="dialog.show"
 				:name="dialog.title"
+				:container="null"
 				@close="dialog.cancel">
 				<p>{{ dialog.message }}</p>
-				<div v-if="dialog.case === 'output_exists'" class="delete-files-checkbox">
-					<NcCheckboxRadioSwitch :checked.sync="deleteFilesChecked">
+				<div v-show="dialog.case === 'output_exists'" class="delete-files-checkbox">
+					<label class="native-checkbox">
+						<input
+							type="checkbox"
+							:checked="deleteFilesChecked"
+							@change="(e) => { deleteFilesChecked = e.target.checked; console.log('Checkbox changed:', deleteFilesChecked) }">
 						{{ t('video_converter_fm', 'Supprimer aussi les fichiers de sortie') }}
-					</NcCheckboxRadioSwitch>
+					</label>
 				</div>
 				<template #actions>
 					<NcButton type="secondary" @click="dialog.cancel">
@@ -186,6 +196,8 @@ const fetchJobs = async () => {
 const onToggleShowAll = (value) => {
 	showAllJobs.value = value
 	localStorage.setItem('video_converter_fm_show_all_jobs', value.toString())
+	// Afficher le loading pendant le fetch
+	loading.value = true
 	fetchJobs()
 }
 
@@ -275,6 +287,28 @@ const formatLabel = (outputFormats) => {
 		return t('video_converter_fm', 'Format: {format}', { format: readable[0] })
 	}
 	return t('video_converter_fm', 'Formats: {formats}', { formats: readable.join(' + ') })
+}
+
+// Extraire le chemin de sortie Nextcloud depuis output_formats
+const getOutputPath = (outputFormats) => {
+	if (!outputFormats) return null
+	let parsed = outputFormats
+	if (typeof parsed === 'string') {
+		try {
+			parsed = JSON.parse(parsed)
+		} catch (e) {
+			return null
+		}
+	}
+	// Retourner output_nc_path (chemin Nextcloud relatif)
+	if (parsed.output_nc_path) {
+		return parsed.output_nc_path
+	}
+	// Fallback sur output_folder si pas de chemin NC
+	if (parsed.output_folder) {
+		return parsed.output_folder
+	}
+	return null
 }
 
 const formatDate = (dateString) => {
@@ -434,6 +468,13 @@ onUnmounted(() => {
 	padding: 12px 0;
 }
 
+.loading-container {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	padding: 48px;
+}
+
 .jobs-container {
 	display: flex;
 	flex-direction: column;
@@ -482,6 +523,16 @@ onUnmounted(() => {
 	font-size: 14px;
 	color: var(--color-text-maxcontrast);
 	margin-bottom: 4px;
+}
+
+.job-output-path {
+	font-size: 12px;
+	color: var(--color-text-maxcontrast);
+	margin-bottom: 4px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: monospace;
 }
 
 .job-meta {
@@ -610,5 +661,25 @@ onUnmounted(() => {
 	font-size: 14px;
 	color: var(--color-text-maxcontrast);
 	font-style: italic;
+}
+
+.delete-files-checkbox {
+	margin-top: 12px;
+	margin-bottom: 12px;
+}
+
+.native-checkbox {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	cursor: pointer;
+	font-size: 14px;
+}
+
+.native-checkbox input[type="checkbox"] {
+	width: 18px;
+	height: 18px;
+	cursor: pointer;
+	accent-color: var(--color-primary-element);
 }
 </style>
