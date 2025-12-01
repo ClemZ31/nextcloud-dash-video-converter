@@ -16,12 +16,14 @@ ConversionsContent
 
 			<!-- Liste des conversions -->
 			<div v-if="section === 'conversions'" class="conversions-list">
-				<!-- Loading state -->
-				<NcLoadingIcon v-if="loading && jobs.length === 0" :size="64" />
+				<!-- Loading state (spinner global si loading initial OU rechargement) -->
+				<div v-if="loading" class="loading-container">
+					<NcLoadingIcon :size="64" />
+				</div>
 
 				<!-- Empty state -->
 				<NcEmptyContent
-					v-else-if="!loading && jobs.length === 0"
+					v-else-if="jobs.length === 0"
 					:name="t('video_converter_fm', 'Aucune conversion')"
 					:description="t('video_converter_fm', 'Les conversions lancées depuis l\'explorateur de fichiers apparaîtront ici.')">
 					<template #icon>
@@ -41,14 +43,14 @@ ConversionsContent
 						<div class="job-formats">
 							{{ formatLabel(job.output_formats) }}
 						</div>
+						<div v-if="getOutputPath(job.output_formats)" class="job-output-path">
+							{{ t('video_converter_fm', 'Sortie') }}: {{ getOutputPath(job.output_formats) }}
+						</div>
 						<div class="job-meta">
 							<span class="job-date">{{ formatDate(job.created_at) }}</span>
 							<span v-if="job.completed_at" class="job-duration">
 								· {{ formatDuration(job.created_at, job.completed_at) }}
 							</span>
-						</div>
-						<div class="job-creator">
-							{{ t('video_converter_fm', 'Créé par : {user}', { user: job.user_id }) }}
 						</div>
 					</div>					<div class="job-status">
 						<!-- Barre de progression pour tous les jobs en cours (pending ou processing avec progress) -->
@@ -74,12 +76,12 @@ ConversionsContent
 						<div class="job-actions">
 							<!-- Show delete button only if job belongs to current user -->
 							<NcButton
-								v-if="canDeleteJob(job)"
+								v-if="canDeleteJob(job) && getActionButton(job)"
 								type="tertiary"
 								size="small"
 								class="delete-btn"
-								@click="onDelete(job)">
-								{{ t('video_converter_fm', 'Supprimer') }}
+								@click="onJobAction(job)">
+								{{ getActionButton(job).label }}
 							</NcButton>
 							<!-- Show username badge if viewing all jobs and job belongs to someone else -->
 							<span v-if="showAllJobs && job.user_id !== currentUserId" class="job-owner-badge">
@@ -90,6 +92,32 @@ ConversionsContent
 					</div>
 				</div>
 			</div>
+			
+			<!-- Dialog de confirmation suppression/annulation -->
+			<NcDialog
+				v-if="dialog.show"
+				:name="dialog.title"
+				:container="null"
+				@close="dialog.cancel">
+				<p>{{ dialog.message }}</p>
+				<div v-show="dialog.case === 'output_exists'" class="delete-files-checkbox">
+					<label class="native-checkbox">
+						<input
+							type="checkbox"
+							:checked="deleteFilesChecked"
+							@change="(e) => { deleteFilesChecked = e.target.checked; console.log('Checkbox changed:', deleteFilesChecked) }">
+						{{ t('video_converter_fm', 'Supprimer aussi les fichiers de sortie') }}
+					</label>
+				</div>
+				<template #actions>
+					<NcButton type="secondary" @click="dialog.cancel">
+						{{ t('video_converter_fm', 'Annuler') }}
+					</NcButton>
+					<NcButton type="primary" :loading="dialogLoading" @click="dialog.confirm">
+						{{ t('video_converter_fm', 'Confirmer') }}
+					</NcButton>
+				</template>
+			</NcDialog>
 
 			<!-- Paramètres -->
 			<div v-else-if="section === 'settings'" class="settings-section">
@@ -116,7 +144,7 @@ import { useRoute } from 'vue-router'
 import { generateUrl } from '@nextcloud/router'
 import { translate as t } from '@nextcloud/l10n'
 import axios from '@nextcloud/axios'
-import { NcAppContent, NcEmptyContent, NcIconSvgWrapper, NcLoadingIcon, NcProgressBar, NcButton, NcCheckboxRadioSwitch } from '@nextcloud/vue'
+import { NcAppContent, NcEmptyContent, NcIconSvgWrapper, NcLoadingIcon, NcProgressBar, NcButton, NcCheckboxRadioSwitch, NcDialog } from '@nextcloud/vue'
 import convertIcon from '../../img/convert_icon.svg?raw'
 
 const route = useRoute()
@@ -168,6 +196,8 @@ const fetchJobs = async () => {
 const onToggleShowAll = (value) => {
 	showAllJobs.value = value
 	localStorage.setItem('video_converter_fm_show_all_jobs', value.toString())
+	// Afficher le loading pendant le fetch
+	loading.value = true
 	fetchJobs()
 }
 
@@ -259,6 +289,28 @@ const formatLabel = (outputFormats) => {
 	return t('video_converter_fm', 'Formats: {formats}', { formats: readable.join(' + ') })
 }
 
+// Extraire le chemin de sortie Nextcloud depuis output_formats
+const getOutputPath = (outputFormats) => {
+	if (!outputFormats) return null
+	let parsed = outputFormats
+	if (typeof parsed === 'string') {
+		try {
+			parsed = JSON.parse(parsed)
+		} catch (e) {
+			return null
+		}
+	}
+	// Retourner output_nc_path (chemin Nextcloud relatif)
+	if (parsed.output_nc_path) {
+		return parsed.output_nc_path
+	}
+	// Fallback sur output_folder si pas de chemin NC
+	if (parsed.output_folder) {
+		return parsed.output_folder
+	}
+	return null
+}
+
 const formatDate = (dateString) => {
 	if (!dateString) return ''
 	const date = new Date(dateString)
@@ -318,6 +370,58 @@ const onDelete = async (job) => {
 	}
 }
 
+// Dialog state
+const dialog = ref({ show: false, title: '', message: '', case: '', confirm: null, cancel: null })
+const dialogLoading = ref(false)
+const deleteFilesChecked = ref(true)
+
+function getActionButton(job) {
+    if (job.status === 'completed' || job.status === 'failed') {
+        return { label: t('video_converter_fm', 'Supprimer'), type: 'delete' }
+    }
+    if (job.status === 'processing' || job.status === 'pending') {
+        return { label: t('video_converter_fm', 'Annuler'), type: 'cancel' }
+    }
+    return null
+}
+
+async function onJobAction(job) {
+    const action = getActionButton(job)
+    if (!action) return
+    dialogLoading.value = true
+    deleteFilesChecked.value = true // Reset checkbox
+    try {
+        const url = generateUrl(`/apps/video_converter_fm/api/jobs/${job.id}/action/${action.type}`)
+        const res = await axios.get(url)
+        dialog.value = {
+            show: true,
+            title: action.label,
+            message: res.data.message,
+            case: res.data.case,
+            confirm: async () => {
+                dialogLoading.value = true
+                await axios.post(url, { deleteFiles: res.data.case === 'output_exists' && deleteFilesChecked.value })
+                dialog.value.show = false
+                dialogLoading.value = false
+                fetchJobs()
+            },
+            cancel: () => {
+                dialog.value.show = false
+            }
+        }
+    } catch (e) {
+        dialog.value = {
+            show: true,
+            title: t('video_converter_fm', 'Erreur'),
+            message: t('video_converter_fm', 'Impossible de vérifier le statut du job.'),
+            case: 'error',
+            confirm: () => { dialog.value.show = false },
+            cancel: () => { dialog.value.show = false }
+        }
+    }
+    dialogLoading.value = false
+}
+
 // Lifecycle
 onMounted(() => {
 	fetchJobs()
@@ -362,6 +466,13 @@ onUnmounted(() => {
 	flex: 1;
 	overflow-y: auto;
 	padding: 12px 0;
+}
+
+.loading-container {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	padding: 48px;
 }
 
 .jobs-container {
@@ -412,6 +523,16 @@ onUnmounted(() => {
 	font-size: 14px;
 	color: var(--color-text-maxcontrast);
 	margin-bottom: 4px;
+}
+
+.job-output-path {
+	font-size: 12px;
+	color: var(--color-text-maxcontrast);
+	margin-bottom: 4px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: monospace;
 }
 
 .job-meta {
@@ -540,5 +661,25 @@ onUnmounted(() => {
 	font-size: 14px;
 	color: var(--color-text-maxcontrast);
 	font-style: italic;
+}
+
+.delete-files-checkbox {
+	margin-top: 12px;
+	margin-bottom: 12px;
+}
+
+.native-checkbox {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	cursor: pointer;
+	font-size: 14px;
+}
+
+.native-checkbox input[type="checkbox"] {
+	width: 18px;
+	height: 18px;
+	cursor: pointer;
+	accent-color: var(--color-primary-element);
 }
 </style>

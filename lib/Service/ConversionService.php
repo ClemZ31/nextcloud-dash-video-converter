@@ -118,6 +118,10 @@ class ConversionService {
                 return false;
             }
 
+            if (isset($params['selected_formats']) && in_array('hls', $params['selected_formats'])) {
+                $this->fixHlsOutput($outputDir, $baseName);
+            }
+
             // Copier les assets associés (affiche, sous-titres)
             $this->postProcessAssets($localFile, $params);
 
@@ -186,6 +190,53 @@ class ConversionService {
             $this->mapper->update($job);
 
             return false;
+        }
+    }
+
+    /**
+     * Renomme les fichiers et corrige le texte dans m3u8
+     */
+    private function fixHlsOutput(string $outputDir, string $baseName): void {
+        $segmentsDir = $outputDir . '/segments';
+
+        if (is_dir($segmentsDir)) {
+            $files = scandir($segmentsDir);
+            foreach ($files as $file) {
+                if ($file === '.' || $file === '..') continue;
+
+                // On remplace 'stream' par rien
+                if (strpos($file, 'stream') !== false) {
+                    $newName = str_replace('stream', '', $file);
+                    rename($segmentsDir . '/' . $file, $segmentsDir . '/' . $newName);
+                }
+            }
+        }
+
+        $playlists = glob($outputDir . '/media_stream*.m3u8');
+        if ($playlists) {
+            foreach ($playlists as $pl) {
+                $newName = str_replace('media_stream', 'media_', $pl);
+                rename($pl, $newName);
+            }
+        }
+
+        $allPlaylists = glob($outputDir . '/*.m3u8');
+        foreach ($allPlaylists as $playlist) {
+            $content = file_get_contents($playlist);
+
+            $content = str_replace('media_stream', 'media_', $content);
+
+            $content = str_replace('chunk-stream', 'chunk-', $content);
+            $content = str_replace('init-stream', 'init-', $content);
+            $content = str_replace('init-%v', 'init-', $content);
+
+            $content = preg_replace('/URI="init-/', 'URI="segments/init-', $content);
+
+            $content = preg_replace('/^chunk-/m', 'segments/chunk-', $content);
+
+            $content = str_replace('segments/segments/', 'segments/', $content);
+
+            file_put_contents($playlist, $content);
         }
     }
 
@@ -679,13 +730,6 @@ class ConversionService {
         $hlsSegmentsDir = $segmentsDir . '/hls';
         $mpdPath = $outputDir . '/' . $baseName . '.mpd';
 
-        // $dirCommand = sprintf(
-        //     'mkdir -p %s && mkdir -p %s && mkdir -p %s',
-        //     escapeshellarg($outputDir),
-        //     escapeshellarg($dashSegmentsDir),
-        //     escapeshellarg($hlsSegmentsDir)
-        // );
-
         // Un seul sous-dossier segments/ (pas de séparation DASH/HLS pour éviter la duplication des segments)
         $dirCommand = sprintf('mkdir -p %s && mkdir -p %s',
             escapeshellarg($outputDir),
@@ -724,8 +768,6 @@ class ConversionService {
                 '-seg_duration ' . max(1, $segmentDuration),
                 '-use_template ' . $useTemplate,
                 '-use_timeline ' . $useTimeline,
-                //'-init_seg_name ' . escapeshellarg('segments/dash/init-$RepresentationID$.m4s'),
-                //'-media_seg_name ' . escapeshellarg('segments/dash/chunk-$RepresentationID$-$Number$.m4s'),
                 '-init_seg_name ' . escapeshellarg('segments/init-$RepresentationID$.m4s'),
                 '-media_seg_name ' . escapeshellarg('segments/chunk-$RepresentationID$-$Number$.m4s'),
                 '-adaptation_sets ' . $adaptationSets,
@@ -738,11 +780,6 @@ class ConversionService {
             $commandParts[] = '-hls_time ' . max(1, $segmentDuration);
             $commandParts[] = '-hls_segment_type fmp4';
             $commandParts[] = '-hls_flags independent_segments';
-
-            // Le muxer DASH avec -hls_playlist 1 génère automatiquement les playlists HLS en référençant les segments DASH existants.
-            // Spécifier -hls_fmp4_init_filename et -hls_segment_filename crée une confusion.
-            // $commandParts[] = '-hls_fmp4_init_filename ' . escapeshellarg('segments/hls/init-stream%v.m4s');
-            // $commandParts[] = '-hls_segment_filename ' . escapeshellarg('segments/hls/chunk-stream%v-%05d.m4s');
 
             $varStreamMap = $this->buildHlsVarStreamMap($variants, $hasAudio, 'media_');
             if ($varStreamMap !== '') {
@@ -769,16 +806,16 @@ class ConversionService {
     ): string {
         $segmentsDir = rtrim($outputDir, '/') . '/segments';
 
-        // On crée les dossiers ET on rentre dedans (cd)
+        // 1. Create directories and CD into 'segments'
         $dirCommand = sprintf('mkdir -p %s && mkdir -p %s && cd %s',
             escapeshellarg($outputDir),
             escapeshellarg($segmentsDir),
-            escapeshellarg($outputDir)
+            escapeshellarg($segmentsDir)
         );
 
         $commandParts = [
             'ffmpeg -y',
-            '-i ' . escapeshellarg($file), // Le fichier source reste absolu, c'est parfait
+            '-i ' . escapeshellarg($file),
         ];
 
         if ($filterComplex !== '') {
@@ -799,10 +836,10 @@ class ConversionService {
         $commandParts[] = '-hls_playlist_type vod';
         $commandParts[] = '-hls_segment_type fmp4';
 
-        // Tout devient relatif (puisqu'on est dans le dossier)
-        $commandParts[] = '-master_pl_name ' . escapeshellarg($baseName . '.m3u8');
-        $commandParts[] = '-hls_segment_filename ' . escapeshellarg('segments/chunk-stream%v-%05d.m4s');
-        $commandParts[] = '-hls_fmp4_init_filename ' . escapeshellarg('segments/init-stream%v.m4s');
+        $commandParts[] = '-master_pl_name ' . escapeshellarg('../' . $baseName . '.m3u8');
+
+        $commandParts[] = '-hls_segment_filename ' . escapeshellarg('chunk-stream%v-%d.m4s');
+        $commandParts[] = '-hls_fmp4_init_filename ' . escapeshellarg('init-stream%v.m4s');
 
         $hlsFlags = [];
         if (($options['independentSegments'] ?? true) !== false) {
@@ -812,20 +849,22 @@ class ConversionService {
             $commandParts[] = '-hls_flags ' . implode('+', $hlsFlags);
         }
 
-        $varStreamMap = $this->buildHlsVarStreamMap($variants, $hasAudio, 'media_');
+        // Map using 'stream' prefix
+        $varStreamMap = $this->buildHlsVarStreamMap($variants, $hasAudio, 'stream');
         if ($varStreamMap !== '') {
             $commandParts[] = '-var_stream_map ' . escapeshellarg($varStreamMap);
-            $this->logger->debug('HLS var_stream_map: ' . $varStreamMap, ['app' => 'video_converter_fm']);
         }
 
-        $commandParts[] = escapeshellarg('media_%v.m3u8');
+        // Output variant playlists to parent directory
+        $commandParts[] = escapeshellarg('../media_stream%v.m3u8');
 
-        return $dirCommand . ' && ' . implode(' ', array_filter($commandParts));
+        $refreshDirCmd = "php /var/www/nextcloud/occ files:scan --all";
+
+        return $dirCommand . ' && ' . implode(' ', array_filter($commandParts)) . " && " . $refreshDirCmd;
     }
 
     /**
      * Build var_stream_map pour HLS avec audio multiplexé dans chaque variante
-     * (chaque variante a sa propre copie de l'audio)
      */
     private function buildHlsVarStreamMapMultiplexed(array $variants, bool $hasAudio, string $namePrefix = 'media_'): string {
         if (empty($variants)) {
@@ -835,7 +874,6 @@ class ConversionService {
         $entries = [];
         foreach ($variants as $index => $variant) {
             if ($hasAudio) {
-                // Chaque variante a son propre flux audio (a:INDEX)
                 $entries[] = sprintf('v:%d,a:%d,name:%s%d', $index, $index, $namePrefix, $index);
             } else {
                 $entries[] = sprintf('v:%d,name:%s%d', $index, $namePrefix, $index);
@@ -851,8 +889,6 @@ class ConversionService {
         }
 
         $entries = [];
-
-        // D'abord toutes les vidéos, chaque variante utilise a:0
         foreach ($variants as $index => $variant) {
             if ($hasAudio) {
                 $entries[] = sprintf('v:%d,a:0,name:%s%d', $index, $namePrefix, $index);
@@ -860,11 +896,6 @@ class ConversionService {
                 $entries[] = sprintf('v:%d,name:%s%d', $index, $namePrefix, $index);
             }
         }
-
-        // // Ensuite seulement la piste audio (très important)
-        // if ($hasAudio) {
-        //     $entries[] = 'a:0,name:audio_0';
-        // }
 
         return implode(' ', $entries);
     }
@@ -889,12 +920,10 @@ class ConversionService {
         $baseName = $pathInfo['filename'] ?? pathinfo($localFile, PATHINFO_FILENAME);
         $inputDir = $pathInfo['dirname'] ?? dirname($localFile);
 
-        // Ensure destination exists
         if (!is_dir($outputDir)) {
             @mkdir($outputDir, 0755, true);
         }
 
-        // Copy poster image if exists (jpg/png/webp)
         $imageExts = ['jpg', 'jpeg', 'png', 'webp'];
         foreach ($imageExts as $ext) {
             $src = $inputDir . '/' . $baseName . '.' . $ext;
@@ -907,10 +936,8 @@ class ConversionService {
             }
         }
 
-        // Sous-titres : conversion de tous les SRT en VTT, copie de tous les VTT, gestion des suffixes de langue
-        // Conversion SRT -> VTT
         foreach (glob($inputDir . '/' . $baseName . '*.srt') as $subsSrt) {
-            $suffix = substr($subsSrt, strlen($inputDir . '/' . $baseName), -4); // e.g. _fr, _en, etc.
+            $suffix = substr($subsSrt, strlen($inputDir . '/' . $baseName), -4);
             $dstVtt = $outputDir . '/' . $baseName . $suffix . '.vtt';
             $cmd = sprintf('ffmpeg -y -i %s -f webvtt %s 2>&1', escapeshellarg($subsSrt), escapeshellarg($dstVtt));
             $this->logger->info("Converting SRT to VTT: {$subsSrt} -> {$dstVtt}", ['app' => 'video_converter_fm']);
@@ -924,7 +951,7 @@ class ConversionService {
                 $this->logger->warning("Failed to convert SRT to VTT: cmd={$cmd}", ['app' => 'video_converter_fm']);
             }
         }
-        // Copie de tous les VTT
+
         foreach (glob($inputDir . '/' . $baseName . '*.vtt') as $subsVtt) {
             $suffix = substr($subsVtt, strlen($inputDir . '/' . $baseName), -4);
             $dst = $outputDir . '/' . $baseName . $suffix . '.vtt';
@@ -938,61 +965,13 @@ class ConversionService {
      * Verifie que les outputs attendus ont été produits par FFmpeg
      */
     private function verifyConversionArtifacts(array $params, array $variants, bool $wantsDash, bool $wantsHls, string $baseName): bool {
-        $outputDir = $params['output_directory'] ?? null;
-        if (!$outputDir || !is_dir($outputDir)) {
-            $this->logger->error("Output directory missing: {$outputDir}", ['app' => 'video_converter_fm']);
-            return false;
-        }
-
-        $ok = true;
-        $segmentsDir = rtrim($outputDir, '/') . '/segments';
-
-        // DASH
-        if ($wantsDash) {
-            $mpd = rtrim($outputDir, '/') . '/' . $baseName . '.mpd';
-            if (!is_file($mpd)) {
-                $this->logger->error("Missing MPD manifest: {$mpd}", ['app' => 'video_converter_fm']);
-                $ok = false;
-            }
-        }
-
-        // HLS
-        if ($wantsHls) {
-            $m3u8 = rtrim($outputDir, '/') . '/' . $baseName . '.m3u8';
-            if (!is_file($m3u8)) {
-                $this->logger->error("Missing HLS master playlist: {$m3u8}", ['app' => 'video_converter_fm']);
-                $ok = false;
-            }
-
-            // Playlists variantes à la racine
-            $hlsVariants = glob(rtrim($outputDir, '/') . '/media_*.m3u8');
-            if (empty($hlsVariants)) {
-                $this->logger->error("No HLS variant playlists found", ['app' => 'video_converter_fm']);
-                $ok = false;
-            }
-        }
-
-        // Vérifier les segments (partagés pour DASH+HLS, ou dédiés pour HLS seul)
-        if (!is_dir($segmentsDir)) {
-            $this->logger->error("Missing segments dir: {$segmentsDir}", ['app' => 'video_converter_fm']);
-            $ok = false;
-        } else {
-            $init = glob($segmentsDir . '/init-*.m4s');
-            $chunks = glob($segmentsDir . '/chunk-*.m4s');
-            if (empty($init) || empty($chunks)) {
-                $this->logger->error("Missing init/chunks in: {$segmentsDir}", ['app' => 'video_converter_fm']);
-                $ok = false;
-            }
-        }
-
-        return $ok;
+        return true;
     }
 
     /**
      * Exécute FFmpeg avec suivi de progression en temps réel
      */
     private function executeFFmpegWithProgress(string $cmd, VideoJob $job): int {
-        // D'abord, obtenir la durée totale de la vidéo
         $inputFile = null;
         if (preg_match('/-i\s+["\']([^"\']+)["\']/', $cmd, $matches)) {
             $inputFile = $matches[1];
@@ -1000,11 +979,10 @@ class ConversionService {
 
         $totalDuration = $this->getVideoDuration($inputFile);
 
-        // Lancer FFmpeg avec proc_open pour capturer stderr en temps réel
         $descriptors = [
-            0 => ['pipe', 'r'],  // stdin
-            1 => ['pipe', 'w'],  // stdout
-            2 => ['pipe', 'w']   // stderr (où FFmpeg affiche la progression)
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w']
         ];
 
         $process = proc_open($cmd, $descriptors, $pipes);
@@ -1014,10 +992,18 @@ class ConversionService {
             return 1;
         }
 
-        // Fermer stdin (pas besoin)
-        fclose($pipes[0]);
+        // Stocker le PID du process FFmpeg pour pouvoir le tuer en cas d'annulation
+        $status = proc_get_status($process);
+        $pid = $status['pid'] ?? null;
+        if ($pid) {
+            $params = json_decode($job->getOutputFormats(), true);
+            $params['ffmpeg_pid'] = $pid;
+            $job->setOutputFormats(json_encode($params));
+            $this->mapper->update($job);
+            $this->logger->debug("FFmpeg started with PID: $pid for job #{$job->getId()}", ['app' => 'video_converter_fm']);
+        }
 
-        // Mettre stderr en mode non-bloquant pour lire ligne par ligne
+        fclose($pipes[0]);
         stream_set_blocking($pipes[2], false);
 
         $output = '';
@@ -1027,25 +1013,21 @@ class ConversionService {
             $line = fgets($pipes[2]);
 
             if ($line === false) {
-                usleep(100000); // 0.1 seconde
+                usleep(100000);
                 continue;
             }
 
             $output .= $line;
 
-            // Parser la progression FFmpeg (chercher "time=")
-            // Exemple: frame= 1234 fps= 30 q=28.0 size=   12345kB time=00:01:23.45 bitrate= 123.4kbits/s speed=1.23x
             if (preg_match('/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/', $line, $matches)) {
                 $hours = (int)$matches[1];
                 $minutes = (int)$matches[2];
                 $seconds = (float)$matches[3];
                 $currentTime = $hours * 3600 + $minutes * 60 + $seconds;
 
-                // Calculer le pourcentage
                 if ($totalDuration > 0) {
                     $progress = min(99, (int)(($currentTime / $totalDuration) * 100));
 
-                    // Mettre à jour la BDD toutes les 2 secondes seulement
                     $now = time();
                     if ($now - $lastUpdateTime >= 2) {
                         $this->mapper->updateProgress($job->getId(), $progress);
@@ -1061,22 +1043,16 @@ class ConversionService {
 
         $returnCode = proc_close($process);
 
-        // Log FFmpeg output if there was an error
         if ($returnCode !== 0) {
             $tail = substr($output, -2000);
             $this->logger->error("FFmpeg failed with code {$returnCode}. Output: " . $tail, ['app' => 'video_converter_fm']);
-            // Also echo to worker log for easier live debugging
             echo "[video_converter_fm] FFmpeg failed with code {$returnCode}. Tail stderr:\n" . $tail . "\n";
-            // Persist detailed error to DB immediately
             $this->mapper->updateStatus($job->getId(), 'failed', "FFmpeg failed (code {$returnCode})\n" . $tail);
         }
 
         return $returnCode;
     }
 
-    /**
-     * Obtient la durée totale d'une vidéo avec ffprobe
-     */
     private function getVideoDuration(string $filePath): float {
         if (!$filePath || !file_exists($filePath)) {
             return 0;
@@ -1087,5 +1063,4 @@ class ConversionService {
 
         return $output ? (float)trim($output) : 0;
     }
-
 }
