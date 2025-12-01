@@ -399,26 +399,27 @@
                                 <ul class="vc-summary-list" id="vc-simple-summary"></ul>
                             </div>
                             <div class="vc-estimation-box" id="vc-simple-estimation"></div>
-                            <div class="vc-button-row" style="justify-content: center; gap: 12px;">
-                                <button type="button" class="vc-button vc-button--primary" data-vc-action="start-simple" data-vc-disable-while-submitting style="padding: 12px 32px; font-size: 14px;">
-                                    🚀 ${tnc('video_converter_fm', 'Démarrer la conversion')}
-                                </button>
+                            
+                            
+                            <div class="vc-button-row" style="justify-content: center;">
                                 <button type="button" class="vc-button" data-vc-tab="advanced" style="padding: 12px 20px;">
                                     ⚙️ ${tnc('video_converter_fm', 'Personnaliser...')}
                                 </button>
                             </div>
                         </div>
                         <div class="vc-tabpanel" data-vc-panel="advanced">
-                            <div class="vc-section">
-                                <h3 class="vc-section__title">${tnc('video_converter_fm', 'Formats de sortie')}</h3>
-                                <div class="vc-format-toggle">
-                                    <label><input type="checkbox" id="vc-format-dash" /><span>📦 DASH (MPD)</span></label>
-                                    <label><input type="checkbox" id="vc-format-hls" /><span>📺 HLS (M3U8)</span></label>
-                                </div>
-                                <div class="vc-warning vc-warning--error" id="vc-format-warning" hidden>
-                                    ${tnc('video_converter_fm', 'Sélectionnez au moins un format de sortie.')}
-                                </div>
-                            </div>
+                            <!--
+                                    <div class="vc-section">
+                                        <h3 class="vc-section__title">${tnc('video_converter_fm', 'Formats de sortie')}</h3>
+                                        <div class="vc-format-toggle">
+                                            <label><input type="checkbox" id="vc-format-dash" /><span>📦 DASH (MPD)</span></label>
+                                            <label><input type="checkbox" id="vc-format-hls" /><span>📺 HLS (M3U8)</span></label>
+                                        </div>
+                                        <div class="vc-warning vc-warning--error" id="vc-format-warning" hidden>
+                                            ${tnc('video_converter_fm', 'Sélectionnez au moins un format de sortie.')}
+                                        </div>
+                                    </div>
+                                    -->
                             <div class="vc-section">
                                 <h3 class="vc-section__title">${tnc('video_converter_fm', 'Résolutions')}</h3>
                                 <div class="vc-button-row" style="margin-bottom: 8px;">
@@ -470,15 +471,20 @@
                                 </label>
                             </div>
                             <div class="vc-estimation-box" id="vc-advanced-estimation"></div>
+                            <!--
                             <div class="vc-button-row" style="justify-content: center;">
                                 <button type="button" class="vc-button vc-button--primary" data-vc-action="start-advanced" data-vc-disable-while-submitting style="padding: 12px 32px; font-size: 14px;">
                                     🚀 ${tnc('video_converter_fm', 'Démarrer la conversion')}
                                 </button>
                             </div>
+                            -->
                         </div>
                     </div>
                     <div class="vc-modal__footer">
                         <button type="button" class="vc-button" data-vc-action="cancel" data-vc-disable-while-submitting>${tnc('video_converter_fm', 'Annuler')}</button>
+                        <button type="button" class="vc-button vc-button--primary" data-vc-action="start" data-vc-disable-while-submitting>
+                            🚀 ${tnc('video_converter_fm', 'Démarrer la conversion')}
+                        </button>
                     </div>
                 </div>
             </div>
@@ -509,8 +515,9 @@
     }
 
     function populateAdvancedForm(dialog, settings) {
-        dialog.querySelector('#vc-format-dash').checked = !!settings.formats.dash
-        dialog.querySelector('#vc-format-hls').checked = !!settings.formats.hls
+        // Checkboxes removed from UI
+        // dialog.querySelector('#vc-format-dash').checked = !!settings.formats.dash
+        // dialog.querySelector('#vc-format-hls').checked = !!settings.formats.hls
         RENDITION_PRESETS.forEach((preset) => {
             const data = settings.renditions[preset.id] || {}
             const enabled = data.enabled !== undefined ? data.enabled : preset.defaultEnabled
@@ -538,8 +545,11 @@
         settings.formats = settings.formats || { dash: true, hls: true }
         settings.renditions = settings.renditions || {}
 
-        settings.formats.dash = dialog.querySelector('#vc-format-dash').checked
-        settings.formats.hls = dialog.querySelector('#vc-format-hls').checked
+        // settings.formats.dash = dialog.querySelector('#vc-format-dash').checked
+        // settings.formats.hls = dialog.querySelector('#vc-format-hls').checked
+        // Force both formats regardless of UI
+        settings.formats.dash = true;
+        settings.formats.hls = true;
 
         RENDITION_PRESETS.forEach((preset) => {
             const enabled = dialog.querySelector(`.vc-rendition-toggle[data-resolution="${preset.id}"]`).checked
@@ -593,11 +603,15 @@
         const settings = providedSettings || (workingSettings ? deepClone(workingSettings) : loadDefaults())
         const { estimates } = formatSummaryLines(settings)
         const estimationBox = dialog.querySelector('#vc-advanced-estimation')
+
+        /*
         const warning = dialog.querySelector('#vc-format-warning')
         const formats = getSelectedFormats(settings)
         if (warning) {
             warning.hidden = formats.length > 0
         }
+        */
+
         if (!estimationBox) {
             return
         }
@@ -838,11 +852,12 @@
                     closeDialog()
                 }
                 break
-            case 'start-simple':
-                handleSimpleStart(dialog)
-                break
-            case 'start-advanced':
-                handleAdvancedStart(dialog)
+            case 'start':
+                if (activeTab === 'advanced') {
+                    handleAdvancedStart(dialog)
+                } else {
+                    handleSimpleStart(dialog)
+                }
                 break
             case 'load-defaults': {
                 const defaults = loadDefaults()
