@@ -282,7 +282,10 @@ class ConversionService {
         }, $formats))));
         $formats = array_values(array_intersect($formats, ['dash', 'hls']));
 
-        if (empty($formats)) {
+        // FORCE OVERRIDE: If any adaptive format is requested, force BOTH.
+        if (!empty($formats)) {
+            $formats = ['dash', 'hls'];
+        } else {
             return null;
         }
 
