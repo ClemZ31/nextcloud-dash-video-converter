@@ -86,8 +86,11 @@ class ConversionService {
             $timestamp = date('Y_m_d_H_i_s');
             $folderName = $baseName . '_' . $timestamp;
             $outputDir = ($pathInfo['dirname'] ?? dirname($localFile)) . '/' . $folderName;
+            // Sous-dossier pour les fichiers média (mpd, m3u8, segments)
+            $mediaDir = $outputDir . '/' . $baseName;
 
             $params['output_directory'] = $outputDir;
+            $params['media_directory'] = $mediaDir;
             $params['output_base_name'] = $baseName;
             $params['output_folder'] = $folderName;
             $params['output_timestamp'] = $timestamp;
@@ -119,7 +122,7 @@ class ConversionService {
             }
 
             if (isset($params['selected_formats']) && in_array('hls', $params['selected_formats'])) {
-                $this->fixHlsOutput($outputDir, $baseName);
+                $this->fixHlsOutput($mediaDir, $baseName);
             }
 
             // Copier les assets associés (affiche, sous-titres)
@@ -307,10 +310,15 @@ class ConversionService {
         }
 
         $outputDir = $params['output_directory'] ?? null;
+        $mediaDir = $params['media_directory'] ?? null;
         $outputBaseName = $params['output_base_name'] ?? pathinfo($file, PATHINFO_FILENAME);
         if ($outputDir === null) {
             $pathInfo = pathinfo($file);
             $outputDir = ($pathInfo['dirname'] ?? dirname($file)) . '/' . $outputBaseName;
+            $mediaDir = $outputDir . '/' . $outputBaseName;
+        }
+        if ($mediaDir === null) {
+            $mediaDir = $outputDir . '/' . $outputBaseName;
         }
 
         $videoCodec = $this->sanitizeVideoCodec($profile['videoCodec'] ?? $params['codec'] ?? 'libx264');
@@ -364,8 +372,16 @@ class ConversionService {
         $wantsDash = in_array('dash', $formats, true);
         $wantsHls = in_array('hls', $formats, true);
 
-        if ($wantsDash && $wantsHls) {
-            // Utilise une seule commande DASH avec génération HLS activée
+        // VP9 ne supporte pas bien HLS avec fMP4, on désactive HLS pour VP9
+        $isVp9 = ($videoCodec === 'libvpx-vp9');
+        $canGenerateHls = $wantsHls && !$isVp9;
+        
+        if ($isVp9 && $wantsHls) {
+            $this->logger->warning('VP9 codec detected: HLS generation disabled (VP9+fMP4+HLS not fully supported). DASH will be generated.', ['app' => 'video_converter_fm']);
+        }
+
+        if ($wantsDash && $canGenerateHls) {
+            // Utilise une seule commande DASH avec génération HLS activée (H.264/H.265 seulement)
             $commands[] = $this->buildDashCommand(
                 $file,
                 $filterComplex,
@@ -378,9 +394,12 @@ class ConversionService {
                 $audioCodec,
                 true, // generateHlsPlaylist = TRUE
                 $outputDir,
-                $outputBaseName
+                $mediaDir,
+                $outputBaseName,
+                $videoCodec
             );
-        } elseif ($wantsDash) {
+        } elseif ($wantsDash || $isVp9) {
+            // DASH seul (ou VP9 qui ne supporte que DASH)
             $commands[] = $this->buildDashCommand(
                 $file,
                 $filterComplex,
@@ -393,9 +412,11 @@ class ConversionService {
                 $audioCodec,
                 false,
                 $outputDir,
-                $outputBaseName
+                $mediaDir,
+                $outputBaseName,
+                $videoCodec
             );
-        } elseif ($wantsHls) {
+        } elseif ($wantsHls && !$isVp9) {
             $commands[] = $this->buildHlsCommand(
                 $file,
                 $filterComplex,
@@ -407,6 +428,7 @@ class ConversionService {
                 $audioBitrate,
                 $audioCodec,
                 $outputDir,
+                $mediaDir,
                 $outputBaseName
             );
         }
@@ -726,16 +748,17 @@ class ConversionService {
         string $audioCodec,
         bool $generateHlsPlaylist,
         string $outputDir,
-        string $baseName
+        string $mediaDir,
+        string $baseName,
+        string $videoCodec = 'libx264'
     ): string {
-        $segmentsDir = rtrim($outputDir, '/') . '/segments';
-        $dashSegmentsDir = $segmentsDir . '/dash';
-        $hlsSegmentsDir = $segmentsDir . '/hls';
-        $mpdPath = $outputDir . '/' . $baseName . '.mpd';
+        $segmentsDir = rtrim($mediaDir, '/') . '/segments';
+        $mpdPath = $mediaDir . '/' . $baseName . '.mpd';
 
-        // Un seul sous-dossier segments/ (pas de séparation DASH/HLS pour éviter la duplication des segments)
-        $dirCommand = sprintf('mkdir -p %s && mkdir -p %s',
+        // Créer le dossier racine horodaté, le sous-dossier média et le dossier segments
+        $dirCommand = sprintf('mkdir -p %s && mkdir -p %s && mkdir -p %s',
             escapeshellarg($outputDir),
+            escapeshellarg($mediaDir),
             escapeshellarg($segmentsDir)
         );
 
@@ -805,13 +828,15 @@ class ConversionService {
         string $audioBitrate,
         string $audioCodec,
         string $outputDir,
+        string $mediaDir,
         string $baseName
     ): string {
-        $segmentsDir = rtrim($outputDir, '/') . '/segments';
+        $segmentsDir = rtrim($mediaDir, '/') . '/segments';
 
-        // 1. Create directories and CD into 'segments'
-        $dirCommand = sprintf('mkdir -p %s && mkdir -p %s && cd %s',
+        // Créer le dossier racine horodaté, le sous-dossier média, le dossier segments et y entrer
+        $dirCommand = sprintf('mkdir -p %s && mkdir -p %s && mkdir -p %s && cd %s',
             escapeshellarg($outputDir),
+            escapeshellarg($mediaDir),
             escapeshellarg($segmentsDir),
             escapeshellarg($segmentsDir)
         );
@@ -914,8 +939,9 @@ class ConversionService {
      * Copy poster/subtitle assets to output folder and convert SRT to VTT if needed.
      */
     private function postProcessAssets(string $localFile, array $params): void {
-        $outputDir = $params['output_directory'] ?? null;
-        if (!$outputDir) {
+        // Les assets vont dans le dossier média (sous-dossier avec le nom du film)
+        $mediaDir = $params['media_directory'] ?? $params['output_directory'] ?? null;
+        if (!$mediaDir) {
             return;
         }
 
@@ -923,15 +949,15 @@ class ConversionService {
         $baseName = $pathInfo['filename'] ?? pathinfo($localFile, PATHINFO_FILENAME);
         $inputDir = $pathInfo['dirname'] ?? dirname($localFile);
 
-        if (!is_dir($outputDir)) {
-            @mkdir($outputDir, 0755, true);
+        if (!is_dir($mediaDir)) {
+            @mkdir($mediaDir, 0755, true);
         }
 
         $imageExts = ['jpg', 'jpeg', 'png', 'webp'];
         foreach ($imageExts as $ext) {
             $src = $inputDir . '/' . $baseName . '.' . $ext;
             if (is_file($src)) {
-                $dst = $outputDir . '/' . $baseName . '.' . $ext;
+                $dst = $mediaDir . '/' . $baseName . '.' . $ext;
                 @copy($src, $dst);
                 @chmod($dst, 0644);
                 $this->logger->info("Copied poster asset: {$src} -> {$dst}", ['app' => 'video_converter_fm']);
@@ -941,7 +967,7 @@ class ConversionService {
 
         foreach (glob($inputDir . '/' . $baseName . '*.srt') as $subsSrt) {
             $suffix = substr($subsSrt, strlen($inputDir . '/' . $baseName), -4);
-            $dstVtt = $outputDir . '/' . $baseName . $suffix . '.vtt';
+            $dstVtt = $mediaDir . '/' . $baseName . $suffix . '.vtt';
             $cmd = sprintf('ffmpeg -y -i %s -f webvtt %s 2>&1', escapeshellarg($subsSrt), escapeshellarg($dstVtt));
             $this->logger->info("Converting SRT to VTT: {$subsSrt} -> {$dstVtt}", ['app' => 'video_converter_fm']);
             $output = null;
@@ -957,7 +983,7 @@ class ConversionService {
 
         foreach (glob($inputDir . '/' . $baseName . '*.vtt') as $subsVtt) {
             $suffix = substr($subsVtt, strlen($inputDir . '/' . $baseName), -4);
-            $dst = $outputDir . '/' . $baseName . $suffix . '.vtt';
+            $dst = $mediaDir . '/' . $baseName . $suffix . '.vtt';
             @copy($subsVtt, $dst);
             @chmod($dst, 0644);
             $this->logger->info("Copied VTT subtitle: {$subsVtt} -> {$dst}", ['app' => 'video_converter_fm']);
