@@ -1,6 +1,6 @@
 {
   "name": "video-converter-fm",
-  "version": "1.0.6",
+  "version": "2.0.0",
   "description": "Nextcloud app for video conversion",
   "main": "js/conversions-app.js",
   "scripts": {
