@@ -9,25 +9,59 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Couleurs et styles
+function Write-Header {
+    param([string]$Text)
+    Write-Host ""
+    Write-Host "======================================================================" -ForegroundColor Cyan
+    Write-Host "   $Text" -ForegroundColor Cyan
+    Write-Host "======================================================================" -ForegroundColor Cyan
+}
+
+function Write-Step {
+    param([string]$Step, [string]$Text)
+    Write-Host ""
+    Write-Host "----------------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "  [$Step] $Text" -ForegroundColor Yellow
+    Write-Host "----------------------------------------------------------------------" -ForegroundColor DarkGray
+}
+
+function Write-Success {
+    param([string]$Text)
+    Write-Host "  [OK] $Text" -ForegroundColor Green
+}
+
+function Write-Info {
+    param([string]$Text)
+    Write-Host "    -> $Text" -ForegroundColor Gray
+}
+
+function Write-Separator {
+    Write-Host ""
+    Write-Host "----------------------------------------------------------------------" -ForegroundColor DarkGray
+}
+
 # Valider les paramètres obligatoires
 if (-not $RemoteUser -or -not $RemoteHost) {
-    Write-Host "ERREUR: Parametres manquants" -ForegroundColor Red
     Write-Host ""
-    Write-Host "Usage:" -ForegroundColor Yellow
-    Write-Host "  .\deploy-clean.ps1 -RemoteUser <user> -RemoteHost <host>" -ForegroundColor White
+    Write-Host "  [ERREUR] Parametres manquants" -ForegroundColor Red
     Write-Host ""
-    Write-Host "Exemple:" -ForegroundColor Yellow
-    Write-Host "  .\deploy-clean.ps1 -RemoteUser cdeffes -RemoteHost funambules-nc-test.koumbit.net" -ForegroundColor White
+    Write-Host "  Usage:" -ForegroundColor Yellow
+    Write-Host "    .\deploy-clean.ps1 -RemoteUser <user> -RemoteHost <host>" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Exemple:" -ForegroundColor Yellow
+    Write-Host "    .\deploy-clean.ps1 -RemoteUser cdeffes -RemoteHost funambules-nc-test.koumbit.net" -ForegroundColor White
+    Write-Host ""
     exit 1
 }
 
-Write-Host "================================================" -ForegroundColor Cyan
-Write-Host "   Deploiement Video Converter (Clean)" -ForegroundColor Cyan
-Write-Host "================================================" -ForegroundColor Cyan
+Write-Header "Deploiement Video Converter FM"
 Write-Host ""
+Write-Host "  Serveur: " -NoNewline -ForegroundColor Gray
+Write-Host "$RemoteUser@$RemoteHost" -ForegroundColor White
 
 # Étape 1: Création d'une structure propre
-Write-Host "[1/4] Creation de la structure temporaire..." -ForegroundColor Yellow
+Write-Step "1/4" "Creation de la structure temporaire"
 
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 # Crée un dossier racine avec le NOM EXACT de l'app pour que l'archive
@@ -60,15 +94,14 @@ $filesToInclude = @(
 foreach ($item in $filesToInclude) {
     if (Test-Path $item) {
         Copy-Item -Path $item -Destination $tempDir -Recurse -Force
-        Write-Host "  Copie: $item" -ForegroundColor Gray
+        Write-Info "Copie: $item"
     }
 }
 
-Write-Host "[OK] Structure creee" -ForegroundColor Green
-Write-Host ""
+Write-Success "Structure creee"
 
 # Étape 2: Création de l'archive
-Write-Host "[2/4] Creation de l'archive..." -ForegroundColor Yellow
+Write-Step "2/4" "Creation de l'archive ZIP"
 
 # Créer le ZIP avec des chemins Unix (forward slashes)
 # On doit convertir les chemins pour éviter les backslashes Windows
@@ -110,35 +143,36 @@ finally {
     $zip.Dispose()
 }
 
-Write-Host "[OK] Archive creee: $archiveName" -ForegroundColor Green
-Write-Host ""
+Write-Success "Archive creee: $archiveName"
 
 # Nettoyer le dossier temporaire
 Remove-Item $tempDir -Recurse -Force
 
 # Étape 3: Upload
-Write-Host "[3/4] Upload vers le serveur..." -ForegroundColor Yellow
+Write-Step "3/4" "Upload vers le serveur"
 
 scp $archiveName "${RemoteUser}@${RemoteHost}:/home/${RemoteUser}/"
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERREUR] Erreur lors de l'upload" -ForegroundColor Red
+    Write-Host "  [ERREUR] Erreur lors de l'upload" -ForegroundColor Red
     Remove-Item $archiveName
     exit 1
 }
 
-Write-Host "[OK] Upload reussi" -ForegroundColor Green
-Write-Host ""
+Write-Success "Upload reussi"
 
 # Étape 4: Instructions pour le serveur
-Write-Host "[4/4] Commandes a executer sur le serveur:" -ForegroundColor Yellow
+Write-Step "4/4" "Commandes a executer sur le serveur"
+
 Write-Host ""
-Write-Host "ssh ${RemoteUser}@${RemoteHost}" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "# Ensuite, executez ces commandes:" -ForegroundColor Gray
+Write-Host "  Connectez-vous avec:" -ForegroundColor Gray
+Write-Host "  ssh ${RemoteUser}@${RemoteHost}" -ForegroundColor Cyan
+Write-Separator
 Write-Host ""
 
 $commands = @'
+echo "========================================================================"
+
 # Variables
 APP_ID=video_converter_fm
 APP_DIR=/var/www/nextcloud/apps/$APP_ID
@@ -211,25 +245,34 @@ rm -f "$ZIP_FILE"
 rm -rf ~/deploy-temp
 
 echo ""
-echo "Deploiement termine !"
-echo "Ouvrir: https://funambules-nc-test.koumbit.net/apps/video_converter_fm/"
+echo "========================================================================"
+echo "  Deploiement termine !"
+echo "  Ouvrir: https://funambules-nc-test.koumbit.net/apps/video_converter_fm/"
+echo "========================================================================"
+echo ""
+
 '@
 
 Write-Host $commands -ForegroundColor White
-Write-Host ""
+
+Write-Separator
 
 # Copier dans le presse-papier
 if (Get-Command Set-Clipboard -ErrorAction SilentlyContinue) {
     $commands | Set-Clipboard
-    Write-Host "[OK] Commandes copiees dans le presse-papier !" -ForegroundColor Green
+    Write-Success "Commandes copiees dans le presse-papier !"
 }
 
-# Nettoyage local (garder le ZIP pour debug)
+# Résumé final
 Write-Host ""
-Write-Host "================================================" -ForegroundColor Cyan
-Write-Host "[OK] Pret pour le deploiement !" -ForegroundColor Green
-Write-Host "================================================" -ForegroundColor Cyan
+Write-Host "======================================================================" -ForegroundColor Green
+Write-Host "  [OK] PRET POUR LE DEPLOIEMENT" -ForegroundColor Green
+Write-Host "======================================================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "Archive locale: $archiveName" -ForegroundColor Yellow
-Write-Host "Connectez-vous au serveur et collez les commandes." -ForegroundColor White
+Write-Host "  Archive locale: " -NoNewline -ForegroundColor Gray
+Write-Host "$archiveName" -ForegroundColor Yellow
+Write-Host "  Serveur:        " -NoNewline -ForegroundColor Gray
+Write-Host "$RemoteUser@$RemoteHost" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "  Connectez-vous au serveur et collez les commandes (CTRL+V)" -ForegroundColor White
 Write-Host ""

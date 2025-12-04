@@ -43,8 +43,15 @@ ConversionsContent
 						<div class="job-formats">
 							{{ formatLabel(job.output_formats) }}
 						</div>
-						<div v-if="getOutputPath(job.output_formats)" class="job-output-path">
-							{{ t('video_converter_fm', 'Sortie') }}: {{ getOutputPath(job.output_formats) }}
+						<div v-if="getOutputPath(job.output_formats) && job.output_folder_exists" class="job-output-path">
+							<span>{{ t('video_converter_fm', 'Sortie') }}: {{ getOutputPath(job.output_formats) }}</span>
+							<a 
+								:href="getOutputFolderUrl(job.output_formats)"
+								class="open-folder-link"
+								:title="t('video_converter_fm', 'Ouvrir le dossier')"
+							>
+								🔗
+							</a>
 						</div>
 						<div class="job-meta">
 							<span class="job-date">{{ formatDate(job.created_at) }}</span>
@@ -311,9 +318,22 @@ const getOutputPath = (outputFormats) => {
 	return null
 }
 
+// Générer l'URL pour ouvrir le dossier de sortie dans Nextcloud Files
+const getOutputFolderUrl = (outputFormats) => {
+	const path = getOutputPath(outputFormats)
+	if (!path) return '#'
+	// Encoder le chemin pour l'URL
+	const encodedPath = encodeURIComponent(path)
+	return `/apps/files/?dir=${encodedPath}`
+}
+
 const formatDate = (dateString) => {
 	if (!dateString) return ''
-	const date = new Date(dateString)
+	// Le serveur stocke en UTC, on ajoute 'Z' pour que JS l'interprète correctement
+	const utcDateString = dateString.includes('Z') || dateString.includes('+') 
+		? dateString 
+		: dateString.replace(' ', 'T') + 'Z'
+	const date = new Date(utcDateString)
 	const now = new Date()
 	const diffMs = now - date
 	const diffMins = Math.floor(diffMs / 60000)
@@ -330,8 +350,15 @@ const formatDate = (dateString) => {
 
 const formatDuration = (startString, endString) => {
 	if (!startString || !endString) return ''
-	const start = new Date(startString)
-	const end = new Date(endString)
+	// Le serveur stocke en UTC
+	const utcStart = startString.includes('Z') || startString.includes('+') 
+		? startString 
+		: startString.replace(' ', 'T') + 'Z'
+	const utcEnd = endString.includes('Z') || endString.includes('+') 
+		? endString 
+		: endString.replace(' ', 'T') + 'Z'
+	const start = new Date(utcStart)
+	const end = new Date(utcEnd)
 	const diffSeconds = Math.floor((end - start) / 1000)
 	
 	if (diffSeconds < 60) return t('video_converter_fm', '{n} sec', { n: diffSeconds })
@@ -533,6 +560,26 @@ onUnmounted(() => {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	font-family: monospace;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.job-output-path span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.open-folder-link {
+	text-decoration: none;
+	font-size: 14px;
+	opacity: 0.7;
+	transition: opacity 0.2s;
+	flex-shrink: 0;
+}
+
+.open-folder-link:hover {
+	opacity: 1;
 }
 
 .job-meta {

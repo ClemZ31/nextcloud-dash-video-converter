@@ -68,6 +68,21 @@ class ConversionController extends Controller
 	}
 
 	/**
+	 * Vérifie si le dossier de sortie existe dans Nextcloud
+	 * @param string $userId L'ID de l'utilisateur propriétaire du dossier
+	 * @param string $outputPath Le chemin Nextcloud du dossier de sortie
+	 * @return bool True si le dossier existe, false sinon
+	 */
+	private function outputFolderExists(string $userId, string $outputPath): bool {
+		try {
+			$userFolder = $this->rootFolder->getUserFolder($userId);
+			return $userFolder->nodeExists($outputPath);
+		} catch (\Exception $e) {
+			return false;
+		}
+	}
+
+	/**
 	 * @NoAdminRequired
 	 */
 	/**
@@ -247,12 +262,24 @@ class ConversionController extends Controller
 			$jobs = $this->jobMapper->findByUserId($this->userId);
 			
 			$result = array_map(function($job) {
+				// Extraire le chemin de sortie du JSON output_formats
+				$outputFormats = $job->getOutputFormats();
+				$formats = json_decode($outputFormats, true) ?: [];
+				$outputNcPath = $formats['output_nc_path'] ?? null;
+				
+				// Vérifier si le dossier de sortie existe
+				$outputFolderExists = false;
+				if ($outputNcPath) {
+					$outputFolderExists = $this->outputFolderExists($job->getUserId(), $outputNcPath);
+				}
+				
 				return [
 					'id' => $job->getId(),
 					'file_id' => $job->getFileId(),
 					'user_id' => $job->getUserId(),
 					'input_path' => $job->getInputPath(),
-					'output_formats' => $job->getOutputFormats(),
+					'output_formats' => $outputFormats,
+					'output_folder_exists' => $outputFolderExists,
 					'status' => $job->getStatus(),
 					'progress' => $job->getProgress(),
 					'created_at' => $job->getCreatedAt(),
@@ -281,12 +308,24 @@ class ConversionController extends Controller
 			$jobs = $this->jobMapper->findAll();
 			
 			$result = array_map(function($job) {
+				// Extraire le chemin de sortie du JSON output_formats
+				$outputFormats = $job->getOutputFormats();
+				$formats = json_decode($outputFormats, true) ?: [];
+				$outputNcPath = $formats['output_nc_path'] ?? null;
+				
+				// Vérifier si le dossier de sortie existe
+				$outputFolderExists = false;
+				if ($outputNcPath) {
+					$outputFolderExists = $this->outputFolderExists($job->getUserId(), $outputNcPath);
+				}
+				
 				return [
 					'id' => $job->getId(),
 					'file_id' => $job->getFileId(),
 					'user_id' => $job->getUserId(),
 					'input_path' => $job->getInputPath(),
-					'output_formats' => $job->getOutputFormats(),
+					'output_formats' => $outputFormats,
+					'output_folder_exists' => $outputFolderExists,
 					'status' => $job->getStatus(),
 					'progress' => $job->getProgress(),
 					'created_at' => $job->getCreatedAt(),
