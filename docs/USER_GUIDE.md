@@ -10,6 +10,8 @@ This module allows you to transform raw video files (MP4, MOV, MKV) into optimiz
 
 A window will open offering two modes:
 
+![Convert Window](docs/screenshots/convert_window.png)
+
 ### Simple Mode (Recommended)
 This is the default mode. It applies the best settings for maximum compatibility.
 * **Summary:** Displays the profile that will be applied.
@@ -36,6 +38,8 @@ Once the conversion has started, you do not need to stay on the page.
     * 🔵 **Processing:** The progress bar shows current status.
     * 🟢 **Completed:** The video is ready.
     * 🔴 **Failed:** An error occurred (hover over the status for details).
+
+![ConversionPage](docs/screenshots/conversions.png)
 
 ## 3. Result
 

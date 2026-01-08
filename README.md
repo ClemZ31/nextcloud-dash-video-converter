@@ -1,4 +1,4 @@
-# Video Converter FM for Nextcloud
+# Video Converter for Nextcloud
 
 **Languages:** [English](README_ENG.md) | [Français](README_FR.md)
 
@@ -23,8 +23,8 @@ The goal is to build a fully **open-source video streaming system** that enables
 |----------|-------------|
 | [README (English)](README_ENG.md) | Full documentation in English |
 | [README (Français)](README_FR.md) | Documentation complète en français |
-| [Admin Guide](GUIDE_ADMIN.md) | Server installation and configuration |
-| [User Guide](GUIDE_UTILISATEUR.md) | How to use the application |
+| [Admin Guide](docs/GUIDE_ADMIN.md) | Server installation and configuration |
+| [User Guide](docs/GUIDE_UTILISATEUR.md) | How to use the application |
 
 ## Key Features
 

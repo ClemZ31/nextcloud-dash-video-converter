@@ -1,4 +1,4 @@
-# Nextcloud Video Converter (PFE)
+# Nextcloud Video Converter
 
 A Nextcloud application designed for asynchronous video transcoding into adaptive streaming formats (DASH and HLS). Built to be high-performance, non-blocking, and natively integrated into the Files interface.
 

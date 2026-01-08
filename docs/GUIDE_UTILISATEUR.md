@@ -4,11 +4,13 @@ Ce module vous permet de transformer vos vidéos brutes (MP4, MOV, MKV, etc.) en
 
 ## 1. Lancer une conversion
 
-1.  Naviguez dans vos fichiers Nextcloud.
+1.  Naviguez dans vos fichiers Nextcloud.wA
 2.  Faites un **clic-droit** sur un fichier vidéo (ou cliquez sur les **...**).
 3.  Sélectionnez **"Convertir en profil adaptatif"**.
 
 Une fenêtre s'ouvre avec deux modes :
+
+![Convert Window](docs/screenshots/convert_window.png)
 
 ### Mode Simple (Recommandé)
 C'est le mode par défaut. Il applique les meilleurs paramètres pour une compatibilité maximale.
@@ -47,6 +49,8 @@ Une fois la conversion lancée, vous n'avez pas besoin de rester sur la page.
     * **Échoué :** Une erreur est survenue (le message d'erreur s'affiche).
 
 3.  Vous pouvez **supprimer** une tâche terminée ou échouée, ou **annuler** une tâche en cours/en attente.
+
+![ConversionPage](docs/screenshots/conversions.png)
 
 ## 3. Résultat
 
